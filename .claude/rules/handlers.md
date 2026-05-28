@@ -1,25 +1,33 @@
 ---
 paths:
   - "handlers.go"
-  - "main.go"
+  - "app.go"
+  - "cmd/server/**"
 ---
 
 # HTTP Layer Rules
 
-Applies to `handlers.go` and `main.go`. The HTTP boundary is where input parsing, FSM checks, DB calls, and template rendering come together. Keep this layer thin and predictable.
+Applies to `handlers.go`, `app.go`, and `cmd/server/main.go`. Three responsibilities split across two packages.
 
-## `main.go` is entry-only
+## `app.go` — application wiring (`package todolist`)
 
-`main.go` does these things and **only** these things:
-1. Embed migrations: `//go:embed migrations/*.sql` → `embed.FS`.
-2. Embed static assets: `//go:embed static/pico.css` (or `static/*`).
-3. Open the SQLite database.
-4. Run `goose.Up(db, "migrations")` on startup. Migrations always run; that's the design.
-5. Construct sqlc `Queries`, parse templates (`render.go`), build handler struct.
-6. Register Echo routes.
-7. Start the server.
+`app.go` owns the embeds and the `NewApp` constructor:
+1. `//go:embed migrations/*.sql` → `migrationsFS`.
+2. `//go:embed static/*` → `staticFS`.
+3. `NewApp(sqldb *sql.DB) (*echo.Echo, error)` — runs migrations, loads templates, builds the `Handlers` struct, registers routes on a fresh `*echo.Echo`, returns it ready to `Start()`.
+4. `RunMigrations(sqldb *sql.DB) error` — exported so e2e tests can drive setup if needed; called internally by `NewApp`.
 
-**Forbidden in `main.go`:** SQL, business logic, FSM checks, template execution, handler bodies. If you're tempted to add one, it belongs in `handlers.go`, `fsm.go`, or `render.go`.
+**Forbidden in `app.go`:** handler bodies, FSM checks, template rendering logic.
+
+## `cmd/server/main.go` — the entrypoint (`package main`)
+
+The whole entrypoint is small:
+1. Open SQLite (`sql.Open` with the WAL/sync DSN).
+2. `defer func() { _ = sqldb.Close() }()`.
+3. `e, err := todolist.NewApp(sqldb)`.
+4. `e.Start(":8080")`.
+
+Nothing else. No flags, no config files, no logging beyond `log.Println`. If you need more, lift it into `app.go` first.
 
 ## Handler shape — every handler follows this pattern
 

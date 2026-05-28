@@ -1,4 +1,4 @@
-.PHONY: fmt lint test cover check run build clean sqlc
+.PHONY: fmt lint test test-unit test-e2e cover check run build clean sqlc
 
 fmt:
 	goimports -w .
@@ -11,6 +11,12 @@ lint:
 test:
 	go test ./...
 
+test-unit:
+	go test . ./db/...
+
+test-e2e:
+	go test ./e2e/...
+
 cover:
 	go test -coverpkg=./... -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
@@ -19,10 +25,10 @@ cover:
 check: fmt lint test
 
 run:
-	go run .
+	go run ./cmd/server
 
 build:
-	go build -o no-js-todolist .
+	go build -o no-js-todolist ./cmd/server
 
 sqlc:
 	sqlc generate

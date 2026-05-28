@@ -1,13 +1,12 @@
-package main
+package todolist
 
 import (
 	"database/sql"
 	"embed"
-	"log"
+	"fmt"
 
 	"github.com/kingychiu/no-js-todolist/db"
 	"github.com/labstack/echo/v4"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/pressly/goose/v3"
 )
 
@@ -17,20 +16,15 @@ var migrationsFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-func main() {
-	sqldb, err := sql.Open("sqlite3", "file:todos.db?_journal=WAL&_busy_timeout=5000&_sync=NORMAL&_fk=on")
-	if err != nil {
-		log.Fatalf("open db: %v", err)
-	}
-	defer func() { _ = sqldb.Close() }()
-
-	if err := runMigrations(sqldb); err != nil {
-		log.Fatalf("migrations: %v", err)
+// NewApp wires migrations, templates, handlers, and routes into a ready-to-Start Echo instance.
+func NewApp(sqldb *sql.DB) (*echo.Echo, error) {
+	if err := RunMigrations(sqldb); err != nil {
+		return nil, fmt.Errorf("migrations: %w", err)
 	}
 
 	views, err := LoadViews()
 	if err != nil {
-		log.Fatalf("load views: %v", err)
+		return nil, fmt.Errorf("load views: %w", err)
 	}
 
 	h := &Handlers{
@@ -48,13 +42,11 @@ func main() {
 	e.PUT("/todos/:id/progress", h.ProgressTodo)
 	e.DELETE("/todos/:id", h.DeleteTodo)
 
-	log.Println("listening on :8080")
-	if err := e.Start(":8080"); err != nil {
-		log.Fatalf("server: %v", err)
-	}
+	return e, nil
 }
 
-func runMigrations(sqldb *sql.DB) error {
+// RunMigrations applies all pending Goose migrations from the embedded FS.
+func RunMigrations(sqldb *sql.DB) error {
 	goose.SetBaseFS(migrationsFS)
 	goose.SetLogger(goose.NopLogger())
 	if err := goose.SetDialect("sqlite3"); err != nil {

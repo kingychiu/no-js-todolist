@@ -39,10 +39,12 @@ Lint and test stack: three installed binaries — `goimports` (formatting), `gol
 
 ```bash
 make run                   # starts the server on :8080
-make test                  # runs the test suite
+make test                  # runs the full test suite (unit + e2e)
+make test-unit             # in-process integration tests only
+make test-e2e              # black-box HTTP user-story tests only
 make cover                 # writes coverage.html + per-function table
 make check                 # fmt + lint + govulncheck + test
-make build                 # produces a single static binary
+make build                 # produces a single static binary at ./no-js-todolist
 make clean                 # removes build / coverage / SQLite artifacts
 ```
 
@@ -50,25 +52,39 @@ The SQLite database is created automatically on first run; migrations execute on
 
 ## Testing strategy
 
-Four flavors of test live in `main_test.go`:
+Two test layers, in two packages:
+
+**`main_test.go`** — in-process integration tests (white-box, `package todolist`):
 
 1. **FSM unit tests** — table-driven over all 9 ordered pairs of `(current, next)` states.
 2. **Handler + template contract tests** — `httptest` request → `goquery` parse → assert on selectors and `hx-*` attributes (e.g., "after PUT on a Pending todo, the response contains a button with text 'Complete' and `hx-put` pointing at `/todos/{id}/progress`").
-3. **Optimistic-locking guard** — directly exercises `UpdateTodoStatus` with a stale `expected_status` and asserts `rowsAffected == 0`. Verifies the DB-level FSM enforcement.
-4. **Cross-reference test** — fetches the rendered page shell, collects every element ID, then asserts that every `hx-target` referenced by any handler response resolves to an ID that actually exists. This substitutes for browser-based DOM verification and catches the most common HTMX failure (stale/typoed target).
+3. **Optimistic-locking guard** — directly exercises `UpdateTodoStatus` with a stale `expected_status` and asserts `rowsAffected == 0`. Verifies DB-level FSM enforcement.
+4. **Cross-reference test** — fetches the rendered page shell, collects every element ID, asserts every `hx-target` referenced by any handler response resolves to an existing ID. Substitutes for browser-based DOM verification.
 
-Per-test SQLite lives in `t.TempDir()` (not `:memory:` — that breaks under `database/sql` connection pooling). No browser is used. No JSDOM. No Chrome binary. Tests run in well under a second.
+**`e2e/e2e_test.go`** — black-box user-story tests (`package e2e`, separate Go package — cannot import internal helpers):
+
+5. **Full lifecycle** — add → start work → complete → reload, verify state via HTTP at every step.
+6. **Progress-then-reject** — drive a todo to completed, then attempt to progress again; assert the OOB error banner returns alongside the unchanged row.
+7. **Add-delete cycle** — add two todos, delete one, reload, assert only the survivor remains with its title intact.
+8. **Concurrent progress race** — two simultaneous PUTs on the same Pending todo; assert exactly two valid responses and at least one success, tolerating either ordering (the optimistic-lock rejection or both succeeding in sequence are both valid outcomes).
+
+Per-test SQLite lives in `t.TempDir()` (not `:memory:` — that breaks under `database/sql` connection pooling). No browser, no JSDOM, no Chrome binary. Full suite runs in well under two seconds.
 
 ## Project layout
 
 See `CLAUDE.md` for the full folder structure and per-area rules. Briefly:
 
 ```
-main.go          handlers.go       fsm.go          render.go
+app.go           handlers.go       fsm.go          render.go         (package todolist)
+main_test.go                                                         (white-box tests)
+cmd/server/main.go                                                   (package main entrypoint)
+e2e/e2e_test.go                                                      (package e2e black-box tests)
 views/           static/           migrations/     db/ (sqlc-generated)
-query.sql        sqlc.yaml         Makefile        main_test.go
+query.sql        sqlc.yaml         Makefile
 .claude/rules/   path-scoped rule files for each subsystem
 ```
+
+The root is `package todolist` so both `cmd/server` and `e2e/` can import the wiring via `todolist.NewApp(sqldb)`. The e2e package boundary physically prevents black-box tests from reaching into internal helpers.
 
 ## Acknowledged trade-offs
 

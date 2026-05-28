@@ -93,7 +93,7 @@ The native Go finite state machine (`Pending → InProgress → Completed`) live
 | Frontend lib | HTMX (CDN) | The only client-side library. No Alpine, no hyperscript. |
 | Styling | Pico.css v2 (vendored, `go:embed`) | Classless — templates stay semantic, tests assert on tags not utility classes. |
 | Tests | `net/http/httptest` + `goquery` | Pure Go. No browser, no Node. |
-| Lint / static | `golangci-lint` (CLI flags, no config) + `govulncheck` | One binary covers `errcheck` + `staticcheck` + `govet` + `ineffassign` + `goimports`. |
+| Lint / static | `goimports` + `golangci-lint` (CLI flags, no config) + `govulncheck` | Three binaries: formatting, `errcheck`/`staticcheck`/`govet`/`ineffassign`, and stdlib+dep CVE scanning. |
 | Build target | `Makefile` with `fmt`, `lint`, `test`, `cover`, `check` | `make check` before commit. |
 
 ## Folder Structure
@@ -102,34 +102,45 @@ The native Go finite state machine (`Pending → InProgress → Completed`) live
 no-js-todolist/
 ├── CLAUDE.md
 ├── .claude/
-│   └── rules/             # path-scoped detailed rules — load on demand
-│       ├── handlers.md    # paths: handlers.go, main.go
-│       ├── fsm.md         # paths: fsm.go
-│       ├── views.md       # paths: views/**, render.go, static/**
-│       ├── database.md    # paths: query.sql, sqlc.yaml, migrations/**, db/**
-│       └── tests.md       # paths: **/*_test.go
+│   └── rules/                 # path-scoped detailed rules — load on demand
+│       ├── handlers.md        # paths: handlers.go, app.go, cmd/server/**
+│       ├── fsm.md             # paths: fsm.go
+│       ├── views.md           # paths: views/**, render.go, static/**
+│       ├── database.md        # paths: query.sql, sqlc.yaml, migrations/**, db/**
+│       ├── tests.md           # paths: main_test.go, **/*_test.go
+│       ├── e2e.md             # paths: e2e/**
+│       └── tooling.md         # paths: Makefile, .github/**, .gitignore
 ├── go.mod
 ├── go.sum
-├── main.go                # entry: embed migrations, goose.Up, wire Echo, start server
-├── main_test.go           # httptest + goquery — FSM + HTML-contract tests
-├── handlers.go            # Echo HTTP handlers (one per route)
-├── fsm.go                 # TodoState type + CanTransitionTo (the FSM)
-├── render.go              # template parsing + Render helper
-├── sqlc.yaml              # sqlc config (engine: sqlite)
-├── query.sql              # sqlc query definitions
-├── db/                    # sqlc-generated — DO NOT EDIT BY HAND
-├── migrations/            # Goose SQL migrations, embedded
+├── app.go                     # package todolist — NewApp(), RunMigrations(), embeds
+├── fsm.go                     # TodoState + CanTransitionTo + Next
+├── handlers.go                # Echo HTTP handlers
+├── render.go                  # template parsing + Render helper
+├── main_test.go               # in-process httptest tests (white-box, package todolist)
+├── cmd/
+│   └── server/
+│       └── main.go            # package main — tiny entrypoint, calls todolist.NewApp
+├── e2e/
+│   └── e2e_test.go            # package e2e — black-box user-story tests via httptest.NewServer
+├── sqlc.yaml
+├── query.sql
+├── db/                        # sqlc-generated — DO NOT EDIT BY HAND
+├── migrations/
 │   └── 001_init.sql
-├── views/                 # html/template files
-│   ├── layout.html        # base shell — includes #error-banner OOB target
+├── views/                     # html/template files
+│   ├── layout.html
 │   ├── index.html
-│   ├── todo_item.html     # single <li> partial — used for list AND PUT response
-│   └── error_banner.html  # OOB error banner partial
+│   ├── todo_item.html
+│   └── error_banner.html
 └── static/
-    └── pico.css           # vendored Pico.css v2 — embedded
+    └── pico.css               # vendored Pico v2
 ```
 
-Flat by design. No `internal/` or `pkg/` nesting for a 4-route app.
+**Layout rationale:**
+- Root files are `package todolist` so both `cmd/server` and `e2e/` can import the wiring.
+- `cmd/server/main.go` is the only `package main` — a thin entrypoint calling `todolist.NewApp`.
+- `e2e/` is a separate package, which **physically forbids** importing unexported helpers from `todolist`. User-story tests can only drive the system through its HTTP API, the way a real client would.
+- Application code stays flat (no `internal/`, no `pkg/`); we only split when there's a real boundary (entrypoint, black-box tests).
 
 ## How the rules are split
 
@@ -137,11 +148,12 @@ Detailed per-area rules live in `.claude/rules/*.md` with `paths:` frontmatter, 
 
 | File | Loads when Claude touches |
 |------|---------------------------|
-| `.claude/rules/handlers.md` | `handlers.go`, `main.go` |
+| `.claude/rules/handlers.md` | `handlers.go`, `app.go`, `cmd/server/**` |
 | `.claude/rules/fsm.md` | `fsm.go` |
 | `.claude/rules/views.md` | `views/**`, `render.go`, `static/**` |
 | `.claude/rules/database.md` | `query.sql`, `sqlc.yaml`, `migrations/**`, `db/**` |
-| `.claude/rules/tests.md` | `**/*_test.go` |
+| `.claude/rules/tests.md` | `main_test.go`, `**/*_test.go` |
+| `.claude/rules/e2e.md` | `e2e/**` |
 | `.claude/rules/tooling.md` | `Makefile`, `.github/**`, `.golangci.yml`, `.gitignore` |
 
 ## Non-Goals (explicit "don't add this")

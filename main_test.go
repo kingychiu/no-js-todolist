@@ -1,4 +1,4 @@
-package main
+package todolist
 
 import (
 	"context"
@@ -79,7 +79,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(func() { _ = sqldb.Close() })
 
-	if err := runMigrations(sqldb); err != nil {
+	if err := RunMigrations(sqldb); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 

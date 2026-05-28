@@ -1,4 +1,4 @@
-package main
+package todolist
 
 type TodoState string
 
