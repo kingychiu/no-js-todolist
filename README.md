@@ -38,10 +38,12 @@ Lint and test stack: one binary (`golangci-lint` with CLI flags only — `errche
 ## Running
 
 ```bash
-go run .                   # starts the server on :8080
+make run                   # starts the server on :8080
 make test                  # runs the test suite
-make cover                 # generates coverage.html
-make check                 # fmt + lint + test
+make cover                 # writes coverage.html + per-function table
+make check                 # fmt + lint + govulncheck + test
+make build                 # produces a single static binary
+make clean                 # removes build / coverage / SQLite artifacts
 ```
 
 The SQLite database is created automatically on first run; migrations execute on startup.
