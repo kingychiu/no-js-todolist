@@ -141,11 +141,13 @@ Required helpers:
 
 Commands:
 ```
-go test -cover ./...                                      # ad-hoc summary
-go test -coverprofile=coverage.out ./...                  # for CI
-go tool cover -html=coverage.out -o coverage.html         # visual
-go tool cover -func=coverage.out                          # per-function table
+go test -cover ./...                                              # ad-hoc summary
+go test -coverpkg=./... -coverprofile=coverage.out ./...          # for CI (instruments all pkgs)
+go tool cover -html=coverage.out -o coverage.html                 # visual
+go tool cover -func=coverage.out                                  # per-function table
 ```
+
+`-coverpkg=./...` is important: without it, code in `db/` (sqlc-generated) isn't measured even when called by tests in the main package.
 
 **No enforced percentage threshold.** Gaming "must be > 80%" is worse than honest gaps.
 

@@ -1,0 +1,11 @@
+<li id="todo-{{.ID}}"{{ if eq .Status "completed" }} class="completed"{{ end }}>
+  <span>{{ .Title }}</span>
+  {{ if eq .Status "pending" }}
+    <button hx-put="/todos/{{ .ID }}/progress" hx-target="closest li" hx-swap="outerHTML">Start Work</button>
+  {{ else if eq .Status "in_progress" }}
+    <button hx-put="/todos/{{ .ID }}/progress" hx-target="closest li" hx-swap="outerHTML">Complete</button>
+  {{ else }}
+    <span class="visually-hidden">completed</span>
+  {{ end }}
+  <button hx-delete="/todos/{{ .ID }}" hx-target="closest li" hx-swap="delete" class="secondary outline">Delete</button>
+</li>

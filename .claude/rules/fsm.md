@@ -20,6 +20,7 @@ const (
     Completed  TodoState = "completed"
 )
 
+// CanTransitionTo reports whether the FSM allows moving from s to next.
 func (s TodoState) CanTransitionTo(next TodoState) bool {
     switch s {
     case Pending:
@@ -29,13 +30,25 @@ func (s TodoState) CanTransitionTo(next TodoState) bool {
     }
     return false
 }
+
+// Next returns the next state in the linear progression, if any.
+// Used by the "progress" handler — the only valid forward step from each state.
+func (s TodoState) Next() (TodoState, bool) {
+    switch s {
+    case Pending:
+        return InProgress, true
+    case InProgress:
+        return Completed, true
+    }
+    return "", false
+}
 ```
 
 That is the entire FSM. Two valid edges:
 - `Pending → InProgress`
 - `InProgress → Completed`
 
-Everything else (including same-state and any backward transition) returns `false`.
+Everything else (including same-state and any backward transition) returns `false`. `Next()` exists because the `/todos/:id/progress` endpoint asks "what is the single valid forward step from here?" — duplicating that switch in the handler would be worse than exposing it as a method.
 
 ## Resist these "improvements"
 
@@ -52,7 +65,7 @@ The CLAUDE.md "Simplicity First" rule applies hardest here. Do NOT add:
 
 ## What goes in this file
 
-Only the type, the three constants, and `CanTransitionTo`. If you're tempted to add a helper, ask first whether the call site can do it in one line.
+Only the type, the three constants, `CanTransitionTo`, and `Next`. If you're tempted to add a helper beyond these two, ask first whether the call site can do it in one line.
 
 ## When the FSM grows (don't pre-empt this)
 

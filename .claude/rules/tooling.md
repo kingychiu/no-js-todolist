@@ -19,23 +19,24 @@ fmt:
 	goimports -w .
 
 lint:
-	golangci-lint run --disable-all \
-	  --enable=errcheck,staticcheck,govet,ineffassign,goimports \
-	  ./...
+	@test -z "$$(goimports -l .)" || { echo "Run 'make fmt' — files need formatting:"; goimports -l .; exit 1; }
+	golangci-lint run --enable-only=errcheck,staticcheck,govet,ineffassign ./...
 	govulncheck ./...
 
 test:
 	go test ./...
 
 cover:
-	go test -coverprofile=coverage.out ./...
+	go test -coverpkg=./... -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
-	go tool cover -func=coverage.out
+	go tool cover -func=coverage.out | tail -20
 
 check: fmt lint test
 ```
 
 Run `make check` before any commit. `make cover` when you want to see gaps.
+
+**Note on goimports:** golangci-lint v2 moved formatters (`goimports`, `gofmt`, etc.) out of the linters list into a separate `formatters` category. To avoid adding a `.golangci.yml`, we keep `goimports` as a standalone binary: `fmt` runs `goimports -w .`, and `lint` enforces correct formatting via `goimports -l .` (fails if any file needs reformatting).
 
 ## Why this exact linter set
 
@@ -45,7 +46,7 @@ Run `make check` before any commit. `make cover` when you want to see gaps.
 | `staticcheck` | ~200 checks (nil derefs, unused code, idiom violations) | The de-facto Go static analyzer. |
 | `govet` | Stdlib-blessed checks (Go 1.24+ includes `tests` and improved `printf`) | Free, official. |
 | `ineffassign` | Ineffectual assignments | Catches `err := a(); x, err := b()` where the first error is silently overwritten. |
-| `goimports` | Import block formatting + unused-import removal | Superset of `gofmt`. |
+| `goimports` (standalone) | Import formatting + unused-import removal | Runs outside golangci-lint because v2 split formatters off. |
 
 **No config file.** CLI flags are the documented happy path. Don't add `.golangci.yml`. If you ever need to suppress a specific check, use an inline `//nolint:linter-name` comment, surgically.
 

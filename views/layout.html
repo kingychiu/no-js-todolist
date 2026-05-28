@@ -1,0 +1,25 @@
+{{ define "layout" }}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>no-js-todolist</title>
+  <link rel="stylesheet" href="/static/pico.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    .completed > span:first-child { text-decoration: line-through; opacity: 0.6; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+    #error-banner:not(:empty) { background: var(--pico-del-color, #fee); color: var(--pico-color-red-700, #900); padding: 0.5rem 1rem; border-radius: var(--pico-border-radius, 0.25rem); margin: 0.5rem 0; }
+    #todo-list { list-style: none; padding: 0; }
+    #todo-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid var(--pico-muted-border-color, #eee); }
+    #todo-list li > span:first-child { flex: 1; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Todos</h1>
+    <div id="error-banner" aria-live="polite"></div>
+    {{ template "content" . }}
+  </main>
+</body>
+</html>{{ end }}
