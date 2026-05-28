@@ -203,6 +203,9 @@ func TestPut_PendingToInProgress_RendersCompleteButton(t *testing.T) {
 	if got := btn.AttrOr("hx-put", ""); got != fmt.Sprintf("/todos/%d/progress", id) {
 		t.Errorf("hx-put = %q", got)
 	}
+	if got := btn.AttrOr("hx-disabled-elt", ""); got != "this" {
+		t.Errorf("hx-disabled-elt = %q, want %q (debounce protection)", got, "this")
+	}
 }
 
 func TestPut_InProgressToCompleted_NoActionButton(t *testing.T) {

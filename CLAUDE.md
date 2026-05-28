@@ -159,6 +159,8 @@ Detailed per-area rules live in `.claude/rules/*.md` with `paths:` frontmatter, 
 ## Non-Goals (explicit "don't add this")
 
 - **No custom JS / Alpine.js / hyperscript / jQuery.** HTMX CDN only. Even "just a sprinkle" of Alpine for a dropdown is forbidden — push interactions to the server. This is the project's identity, not a preference.
+- **No HTMX extensions.** HTMX 2.0 (June 2024) moved all extensions out of core, so any extension (`htmx-ext-sse`, `htmx-ext-ws`, etc.) is a second `<script>` tag. The "HTMX CDN only" rule is one script tag, exactly.
+- **No real-time UI (SSE, WebSockets, server push).** Out of scope. If polling ever becomes necessary, use native `hx-trigger="every Ns"` — no extra script needed.
 - **No JSON endpoints.** Server returns HTML or empty body.
 - **No state-machine library.** The switch is the FSM.
 - **No CSS framework with utility classes.** Pico classless only.

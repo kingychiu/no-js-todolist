@@ -155,7 +155,8 @@ If a single declaration is genuinely necessary (e.g., strikethrough for complete
 ## What templates may NOT do
 
 - No `<script>` tags except the HTMX CDN in `layout.html`, exactly once.
-- **No Alpine.js. Not even one `x-data` attribute.** This is non-negotiable — the whole project's value comes from the server-rendered-only invariant. Adding Alpine "just for a dropdown" breaks the testing harness.
+- **No HTMX extensions** (`htmx-ext-sse`, `htmx-ext-ws`, `htmx-ext-debug`, etc.). HTMX 2.0 (June 2024) moved all extensions out of core, so any extension is a second `<script>` tag. The "HTMX CDN only" rule is strict.
+- **No Alpine.js. Not even one `x-data` attribute.** This is non-negotiable — the whole project's value comes from the server-rendered-only invariant.
 - No hyperscript (`_="on click ..."`).
 - No jQuery, no any other client-side framework or sprinkle library.
 - No inline JS event handlers (`onclick=`, `onsubmit=`, `onchange=`, etc.).
@@ -167,3 +168,27 @@ If a UI need *feels* like it requires client-side JS (modal toggles, tab switchi
 2. Use `<details>` / `<summary>` (native HTML) for disclosure widgets.
 3. Use CSS-only state (`:checked`, `:focus-within`, `:has()`) for stateless interactions.
 4. Decline the feature.
+
+## DOM visibility — render-only, never CSS-toggle
+
+If an interactive element should not be visible, the server **must not render its HTML** in the response. Do NOT use `.hidden` or `display:none` to hide buttons, forms, modals, or any interactive node.
+
+**Why:** `goquery` tests cannot compute CSS layout. By physically omitting the node from the response, tests can definitively assert visibility via `doc.Find("…").Length() == 0`. CSS-hidden elements would falsely register as present.
+
+Applies to all conditional UI: action buttons that depend on state (already done in `todo_item.html`), modals, error banners (already done via OOB swap), tab panels, accordions. The shell may declare permanent containers (e.g., `<div id="error-banner">`) but their content must come from the server, never from CSS visibility toggles.
+
+## Debouncing: `hx-disabled-elt="this"` on every state-mutating button
+
+All buttons that trigger `hx-post`, `hx-put`, or `hx-delete` **must** include `hx-disabled-elt="this"`. This is native HTMX (core, not an extension) — it disables the button from the moment of click until the request completes, preventing double-clicks and the race conditions they cause.
+
+```html
+<button hx-put="/todos/{{ .ID }}/progress" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="this">Start Work</button>
+```
+
+The optimistic-lock guard in the DB (`UPDATE … WHERE status=?`) is still the source of truth — `hx-disabled-elt` is the cheap UI-level defense, not the correctness mechanism.
+
+## Real-time UI is out of scope
+
+This project does not need real-time. If a future requirement appears:
+- **First choice:** native HTMX polling with `hx-trigger="every Ns"`. No extra script tag, automatically pauses when the tab is backgrounded, standard HTTP semantics.
+- **Not allowed:** SSE (`htmx-ext-sse`), WebSockets (`htmx-ext-ws`), or any other extension. All are second script tags. Adding one would relax the project's core constraint and trigger a separate proposal.
