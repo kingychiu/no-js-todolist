@@ -1,0 +1,22 @@
+{{ define "twenty48_board" }}
+<div id="twenty48-board" hx-target="this" hx-swap="outerHTML">
+  <p style="margin:0 0 0.5rem 0;">Score: <strong>{{ .Score }}</strong></p>
+  <button hidden hx-post="/game/2048/move" hx-vals='{"dir":"left"}'  hx-trigger="keydown[key=='ArrowLeft']  from:body" hx-disabled-elt="this"></button>
+  <button hidden hx-post="/game/2048/move" hx-vals='{"dir":"right"}' hx-trigger="keydown[key=='ArrowRight'] from:body" hx-disabled-elt="this"></button>
+  <button hidden hx-post="/game/2048/move" hx-vals='{"dir":"up"}'    hx-trigger="keydown[key=='ArrowUp']    from:body" hx-disabled-elt="this"></button>
+  <button hidden hx-post="/game/2048/move" hx-vals='{"dir":"down"}'  hx-trigger="keydown[key=='ArrowDown']  from:body" hx-disabled-elt="this"></button>
+  <table aria-label="2048 board">
+    {{ range .Cells }}
+    <tr>
+      {{ range . }}{{ if eq . 0 }}<td class="empty">·</td>{{ else }}<td data-v="{{ . }}">{{ . }}</td>{{ end }}{{ end }}
+    </tr>
+    {{ end }}
+  </table>
+  <div role="group" style="margin-top:0.5rem; max-width: 12rem;">
+    <button hx-post="/game/2048/move" hx-vals='{"dir":"left"}'  hx-disabled-elt="this" aria-label="Move left">←</button>
+    <button hx-post="/game/2048/move" hx-vals='{"dir":"up"}'    hx-disabled-elt="this" aria-label="Move up">↑</button>
+    <button hx-post="/game/2048/move" hx-vals='{"dir":"down"}'  hx-disabled-elt="this" aria-label="Move down">↓</button>
+    <button hx-post="/game/2048/move" hx-vals='{"dir":"right"}' hx-disabled-elt="this" aria-label="Move right">→</button>
+  </div>
+</div>
+{{ end }}

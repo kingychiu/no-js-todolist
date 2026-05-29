@@ -1,5 +1,6 @@
 ---
 paths:
+  - "main_test.go"
   - "**/*_test.go"
 ---
 
@@ -10,175 +11,207 @@ Applies to all `*_test.go` files. The whole project is designed to be testable w
 ## Toolchain — pure Go only
 
 - `net/http/httptest` for the HTTP layer.
-- `github.com/PuerkitoBio/goquery` (or `golang.org/x/net/html`) for parsing response bodies.
+- `github.com/PuerkitoBio/goquery` for parsing response bodies.
 - `database/sql` with a per-test SQLite file in `t.TempDir()` — **not** `:memory:` (see below).
 - Goose for running migrations in test setup.
-- Standard `testing` package — no testify, no ginkgo, no any third-party test framework.
+- Standard `testing` package — no testify, no ginkgo, no third-party framework.
 
 **Forbidden in tests:**
 - `chromedp`, `go-rod`, `playwright-go`, any browser-driving library.
-- Node, JSDOM, happy-dom, any JS runtime — even if it's "just for one test."
-- Real network calls. Real filesystem access outside of t.TempDir().
+- Node, JSDOM, happy-dom, any JS runtime — even "just for one test."
+- Real network calls outside of `httptest.NewServer`. Real filesystem outside of `t.TempDir()`.
 
 If a test seems to require any of these, the design is wrong — surface it to the user rather than reaching for a browser.
 
-## Three test categories
+## Four test categories
 
-### 1. FSM unit tests (`TestFSM_*`)
+### 1. FSM unit tests
 
-Direct calls to `CanTransitionTo`. Cover all 9 ordered pairs of (current, next) states, asserting `true` for the two valid edges and `false` for the other seven. No HTTP, no DB.
+Direct calls to each FSM's `CanTransitionTo`. Table-driven over (current, next) pairs. No HTTP, no DB.
 
 ```go
-func TestFSM_CanTransitionTo(t *testing.T) {
+func TestWizardFSM_CanTransitionTo(t *testing.T) {
+    t.Parallel()
     cases := []struct {
-        from, to TodoState
+        from, to WizardState
         want     bool
     }{
-        {Pending, InProgress, true},
-        {InProgress, Completed, true},
-        {Pending, Completed, false},
-        {Completed, InProgress, false},
-        // ... all 9 pairs
+        {WizardUnnamed, WizardNamed, true},
+        {WizardUnnamed, WizardGameChosen, false}, // can't skip ahead
+        {WizardGameChosen, WizardNamed, true},    // back-nav
+        {WizardFinished, WizardPlaying, true},    // replay
+        {WizardFinished, WizardNamed, true},      // restart
+        // ... cover the full matrix
     }
     for _, c := range cases {
         if got := c.from.CanTransitionTo(c.to); got != c.want {
-            t.Errorf("%s -> %s: got %v, want %v", c.from, c.to, got, c.want)
+            t.Errorf("%s → %s: got %v, want %v", c.from, c.to, got, c.want)
         }
     }
 }
+
+func TestSnakeFSM_CanTransitionTo(t *testing.T) { ... }
+func TestT48FSM_CanTransitionTo(t *testing.T)   { ... }
+func TestMSFSM_CanTransitionTo(t *testing.T)    { ... }
 ```
 
-### 2. Handler + template contract tests
+### 2. Pure game-logic unit tests
 
-Boot a real in-memory SQLite with migrations, build the real handler struct, fire HTTP requests with `httptest.NewRecorder` / `httptest.NewRequest`, parse the response body with goquery, and assert on selectors and attributes.
+The game functions (`Tick`, `ApplyMove`, `RevealCell`, `SetDirection`, etc.) are pure — test them directly with constructed board values. Microsecond fast, zero infrastructure.
 
 ```go
-func TestPut_PendingToInProgress_RendersCompleteButton(t *testing.T) {
+func TestSnake_TickAdvancesHead(t *testing.T) {
     t.Parallel()
-    h := newTestHandlers(t)            // helper that builds in-memory DB + handlers
-    id := mustCreateTodo(t, h, "buy milk")
+    b := SnakeBoard{Snake: []Cell{{2,2}}, Direction: East, Food: Cell{9,9}, Width: 10, Height: 10}
+    after, state := Tick(b)
+    if after.Snake[0] != (Cell{3,2}) { t.Fatalf("head didn't advance: %v", after.Snake[0]) }
+    if state != SnakePlaying { t.Fatalf("state = %s, want playing", state) }
+}
 
-    rec := httptest.NewRecorder()
-    req := httptest.NewRequest(http.MethodPut, "/todos/"+fmt.Sprint(id)+"/progress", nil)
-    h.Echo.ServeHTTP(rec, req)
+func TestSnake_TickIntoWallEndsGame(t *testing.T) {
+    t.Parallel()
+    b := SnakeBoard{Snake: []Cell{{9,2}}, Direction: East, Width: 10, Height: 10}
+    _, state := Tick(b)
+    if state != SnakeGameOver { t.Fatalf("expected game_over, got %s", state) }
+}
 
-    if rec.Code != 200 { t.Fatalf("status = %d", rec.Code) }
+func TestT48_ApplyLeft_MergesEqualAdjacentTiles(t *testing.T) {
+    t.Parallel()
+    b := T48Board{ /* {2,2,0,0} on first row */ }
+    after, _ := ApplyMove(b, DirLeft)
+    if after.Cells[0][0] != 4 { t.Fatalf("expected merge to 4, got %d", after.Cells[0][0]) }
+}
 
-    doc, _ := goquery.NewDocumentFromReader(rec.Body)
-    btn := doc.Find("button[hx-put]").First()
-    if got := strings.TrimSpace(btn.Text()); got != "Complete" {
-        t.Errorf("button text = %q, want %q", got, "Complete")
+func TestMS_RevealCell_FloodFillsEmptyRegion(t *testing.T) { ... }
+func TestMS_RevealCell_OnMineLoses(t *testing.T)           { ... }
+func TestMS_FlagCell_TogglesAndDoesntReveal(t *testing.T)  { ... }
+```
+
+Use table-driven cases liberally. These tests have **zero infrastructure** — no DB, no HTTP, no templates. If a game function needs randomness, it takes a `*rand.Rand` parameter and tests pass a deterministic seed.
+
+### 3. Handler + template contract tests
+
+Boot a per-test SQLite, run migrations, build the real `Handlers` struct, fire HTTP requests, parse responses with goquery, assert on selectors.
+
+```go
+func TestPostWizardName_TransitionsToNamed(t *testing.T) {
+    t.Parallel()
+    env := newTestEnv(t)
+    rec := postForm(t, env, "/wizard/name", url.Values{"name": {"Alice"}})
+    if rec.Code != http.StatusOK { t.Fatalf("status = %d", rec.Code) }
+    doc := parse(t, rec.Body)
+    if doc.Find("[data-step='game']").Length() == 0 {
+        t.Errorf("expected game-picker step in response")
     }
-    if got := btn.AttrOr("hx-put", ""); got != fmt.Sprintf("/todos/%d/progress", id) {
-        t.Errorf("hx-put = %q", got)
+}
+
+func TestPost2048Move_RejectedAfterLoss(t *testing.T) {
+    t.Parallel()
+    env := newTestEnv(t)
+    env.startGameViaWizard(t, "2048", "easy")
+    env.forceGameFSM(t, T48Lost)  // white-box shortcut for setup
+    rec := postForm(t, env, "/game/2048/move", url.Values{"dir": {"left"}})
+    doc := parse(t, rec.Body)
+    if !hasOOBErrorBanner(doc) {
+        t.Errorf("expected OOB error on move after loss")
     }
 }
 ```
 
-Tests in this category to write:
-- POST `/todos` with valid title → response contains a new `<li>` with title and "Start Work" button.
-- POST `/todos` with empty title → response contains the OOB error banner.
-- PUT on Pending → "Complete" button, no "Start Work".
-- PUT on InProgress → no action button, completed-styling.
-- PUT on Completed → unchanged row + OOB error banner (invalid transition).
-- DELETE → status 200 with empty body.
-- Concurrent PUT race: simulate two PUTs by calling `UpdateTodoStatus` directly with stale `expectedCurrentStatus` → second one returns 0 rowsAffected, handler renders the error banner.
+Coverage targets in this category:
+- Wizard step submissions: each valid forward transition; each rejection (skip-ahead, invalid back-nav).
+- Per-game move handlers: valid move, game-ending move, post-game-over move (rejected).
+- Optimistic-lock rejection: stale `expected_state` returns 0 rowsAffected.
+- Leaderboard rendering with (game, difficulty) filters.
 
-### 3. Cross-reference test — every `hx-target` resolves in the shell
+### 4. Cross-reference test — every `hx-target` resolves in the shell
 
-This is the test that substitutes for browser-based DOM verification.
+Substitutes for browser-based DOM verification.
 
 ```go
 func TestHxTargets_ResolveInShell(t *testing.T) {
-    h := newTestHandlers(t)
-    // Seed one todo in each state so all handler branches render.
-    mustCreateTodo(t, h, "p")
-    inProgressID := mustCreateTodo(t, h, "ip")
-    mustProgressToInProgress(t, h, inProgressID)
+    env := newTestEnv(t)
+    // Walk enough of the state space that every response branch renders.
 
-    shell := fetchHTML(t, h, http.MethodGet, "/")
+    shell := fetchDoc(t, env, http.MethodGet, "/")
     shellIDs := collectIDs(shell)
-
-    // Collect every hx-target and hx-swap-oob ID from every handler response.
-    responses := []*goquery.Document{
-        shell,
-        fetchHTML(t, h, http.MethodPut, fmt.Sprintf("/todos/%d/progress", inProgressID)),
-        // ... one fetch per relevant route × state
+    if !shellIDs["error-banner"] || !shellIDs["wizard-frame"] {
+        t.Fatalf("shell missing required ids; got %v", shellIDs)
     }
+
+    responses := []*goquery.Document{ /* fetch each major response shape */ }
     for _, doc := range responses {
         doc.Find("[hx-target], [hx-swap-oob]").Each(func(_ int, s *goquery.Selection) {
-            target := s.AttrOr("hx-target", "")
-            if strings.HasPrefix(target, "#") {
-                id := strings.TrimPrefix(target, "#")
-                if !shellIDs[id] {
-                    t.Errorf("hx-target=%q has no matching id in shell", target)
+            if t := s.AttrOr("hx-target", ""); strings.HasPrefix(t, "#") {
+                if !shellIDs[strings.TrimPrefix(t, "#")] {
+                    t.Errorf("hx-target=%q has no matching id in shell", t)
                 }
             }
-            // Similar check for hx-swap-oob="true" elements that carry an id.
         })
     }
 }
 ```
 
-This catches: typoed target IDs, IDs that exist in the shell but get removed by an OOB swap, OOB fragments referencing non-existent containers — the most common silent HTMX bugs.
+Catches typoed IDs, OOB targets that don't exist, and the most common silent HTMX bugs without needing a real DOM.
 
 ## Test setup helpers
 
-Put helpers in `main_test.go` next to the tests. Don't create a `testhelpers` package — there's only one test file.
+Put helpers in `main_test.go` next to the tests. Don't create a `testhelpers` package.
 
-Required helpers:
-- `newTestEnv(t)` — opens a per-test SQLite file at `filepath.Join(t.TempDir(), "test.db")`, runs goose, builds Views and Handlers, registers routes on a fresh `*echo.Echo`. Returns the struct ready to `ServeHTTP`.
-- `mustCreate(t, env, title)` → returns the new ID.
-- `mustForceStatus(t, env, id, from, to)` — drives the state machine for setup via direct `UpdateTodoStatus` (bypassing the handler).
-- `fetchDoc(t, env, method, path, body)` → `*goquery.Document` + `*httptest.ResponseRecorder`.
+Required:
+- `newTestEnv(t)` — opens per-test SQLite at `filepath.Join(t.TempDir(), "test.db")`, runs goose, builds Views + Handlers, returns the env with a fresh `*echo.Echo`.
+- `postForm(t, env, path, values)` — POST `application/x-www-form-urlencoded`.
+- `parse(t, body) *goquery.Document` — goquery parse.
+- `(*testEnv).startGameViaWizard(t, game, difficulty)` — drives the wizard via real HTTP up to `playing` state. Used by tests that need a game-in-progress.
+- `(*testEnv).forceGameFSM(t, state)` — white-box shortcut to set the game's FSM state directly. **Forbidden in e2e tests** (separate package, can't import this).
 
 ### Critical: do NOT use `:memory:` SQLite in tests
 
-`database/sql` opens multiple connections in a pool. `sqlite3` with `:memory:` creates an **isolated, blank database per connection** — so `goose.Up` applies migrations on one connection, and your queries hit a different connection where the table doesn't exist. `cache=shared` partially works around it but has locking edge cases with goose.
+`database/sql` opens multiple connections in a pool. `sqlite3` with `:memory:` creates an **isolated, blank database per connection** — so `goose.Up` applies migrations on one connection, and queries hit a different connection where tables don't exist. `cache=shared` partially works around it but has locking edge cases with goose.
 
-The correct pattern is a per-test file in `t.TempDir()`:
+Per-test file in `t.TempDir()`:
 
 ```go
 dbpath := filepath.Join(t.TempDir(), "test.db")
 sqldb, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL&_busy_timeout=5000&_sync=NORMAL&_fk=on", dbpath))
 ```
 
-`t.TempDir()` is auto-cleaned by the test framework. Each test gets a fresh DB. No shared-cache surprises.
+`t.TempDir()` is auto-cleaned. Each test gets a fresh DB.
 
 ## Test naming
 
-- `TestFunction_Scenario_Expected`. Example: `TestPut_OnCompleted_ReturnsErrorBanner`.
-- Use `t.Parallel()` whenever the test owns its own DB. Don't parallelize tests that share state.
+- `TestFunction_Scenario_Expected`. Examples: `TestPostWizardName_RejectsEmpty`, `TestSnake_TickEatsFood_ExtendsAndScores`.
+- `t.Parallel()` when the test owns its own DB.
 
 ## Coverage
 
-Commands:
 ```
 go test -cover ./...                                              # ad-hoc summary
-go test -coverpkg=./... -coverprofile=coverage.out ./...          # for CI (instruments all pkgs)
+go test -coverpkg=./... -coverprofile=coverage.out ./...          # CI (instruments all pkgs)
 go tool cover -html=coverage.out -o coverage.html                 # visual
 go tool cover -func=coverage.out                                  # per-function table
 ```
 
-`-coverpkg=./...` is important: without it, code in `db/` (sqlc-generated) isn't measured even when called by tests in the main package.
+`-coverpkg=./...` is important: without it, code in `db/` (sqlc-generated) isn't measured even when called by tests.
 
-**No enforced percentage threshold.** Gaming "must be > 80%" is worse than honest gaps.
+**No enforced percentage threshold.** Gaming `> 80%` is worse than honest gaps.
 
 Informal target:
-- **100% of `fsm.go`** — trivial, achieved by one table-driven test over all 9 (current, next) pairs.
-- **100% of state-transition paths in `handlers.go`** — each valid transition AND the rejected-invalid path (which renders the OOB error banner).
-- **100% of error-returning paths in `handlers.go`** — every handler tested for both success and induced failure (e.g., closed DB, malformed input).
-- **`main.go` wiring is acceptable to remain uncovered** — `goose.Up`, `db.Open`, `srv.Start` are framework-level wiring. Testing them tests the framework, not our code.
+- **100% of `wizard.go`** (`CanTransitionTo`) — table-driven test over the matrix.
+- **100% of each `game_*.go` FSM** — same.
+- **100% of pure game-logic functions** (`Tick`, `ApplyMove`, `RevealCell`, etc.) — these are the load-bearing logic and they're trivial to cover at the pure level.
+- **100% of state-transition paths in `handlers.go`** — each valid transition AND the rejection path.
+- **100% of error-returning paths in `handlers.go`** — induced failures (closed DB, bogus session ID).
+- **`cmd/server/main.go` wiring is acceptable to remain uncovered** — `goose.Up`, `db.Open`, `srv.Start` are framework-level wiring.
 
-Achieving 100% of handler error paths may require injected failures: a deliberately-closed `*sql.DB`, a Todo ID that doesn't exist, a `title` longer than any plausible column constraint. Those tests are worth writing.
-
-`coverage.out` and `coverage.html` are git-ignored — local-view-only artifacts.
+`coverage.out` and `coverage.html` are git-ignored.
 
 ## What tests don't cover (acknowledge, don't fix with a browser)
 
-These bugs would only surface in a real browser. Document them in a `TODO` at the top of `main_test.go` so they're not forgotten:
-- `hx-trigger` event timing edge cases.
+These bugs would only surface in a real browser. Document them in a `TODO` at the top of `main_test.go`:
+- `hx-trigger` event timing edge cases (keyboard repeat-fire, focus quirks).
 - DOM state where an `hx-target` exists in the shell but is hidden / replaced before the swap fires.
 - History/back-button restoration of HTMX-swapped content.
+- Snake long-polling reconnection behavior on network flap.
 
-Acceptable trade-off: this is a small app, the design minimizes browser-only surface, and the cross-reference test catches the most likely class of these bugs at the contract level.
+Accept these as documented risk. The cross-reference test catches the most likely class.

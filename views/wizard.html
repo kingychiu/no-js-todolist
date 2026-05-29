@@ -1,0 +1,114 @@
+{{ define "wizard_frame" }}
+{{ if eq .Session.WizardState "unnamed" }}{{ template "step_name" . }}
+{{ else if eq .Session.WizardState "named" }}{{ template "step_game" . }}
+{{ else if eq .Session.WizardState "game_chosen" }}{{ template "step_difficulty" . }}
+{{ else if eq .Session.WizardState "difficulty_chosen" }}{{ template "step_ready" . }}
+{{ else if eq .Session.WizardState "playing" }}{{ template "step_playing" . }}
+{{ else if eq .Session.WizardState "finished" }}{{ template "step_finished" . }}
+{{ end }}
+{{ end }}
+
+
+{{ define "step_name" }}
+<h2 data-step="name">Welcome!</h2>
+<p>Enter a display name to start playing. It will appear on the leaderboard.</p>
+<form hx-post="/wizard/name" hx-target="#wizard-frame" hx-swap="innerHTML">
+  <fieldset role="group">
+    <input name="name" placeholder="Your name" autofocus required maxlength="32" value="{{ .Session.Name }}">
+    <button type="submit" hx-disabled-elt="this">Continue →</button>
+  </fieldset>
+</form>
+{{ end }}
+
+
+{{ define "step_game" }}
+<h2 data-step="game">Hi {{ .Session.Name }} — pick a game</h2>
+<form hx-post="/wizard/game" hx-target="#wizard-frame" hx-swap="innerHTML">
+  <div class="arcade-controls">
+    <button name="game" value="2048" type="submit" hx-disabled-elt="this">2048</button>
+    <button name="game" value="snake" type="submit" disabled>Snake (Phase 3)</button>
+    <button name="game" value="minesweeper" type="submit" disabled>Minesweeper (Phase 2)</button>
+  </div>
+</form>
+{{ end }}
+
+
+{{ define "step_difficulty" }}
+<h2 data-step="difficulty">{{ .Session.ChosenGame }} — pick a difficulty</h2>
+<form hx-post="/wizard/difficulty" hx-target="#wizard-frame" hx-swap="innerHTML">
+  <div class="arcade-controls">
+    <button name="difficulty" value="easy"   type="submit" hx-disabled-elt="this">Easy</button>
+    <button name="difficulty" value="medium" type="submit" hx-disabled-elt="this">Medium</button>
+    <button name="difficulty" value="hard"   type="submit" hx-disabled-elt="this">Hard</button>
+  </div>
+</form>
+<form hx-post="/wizard/back" hx-target="#wizard-frame" hx-swap="innerHTML" class="arcade-controls">
+  <button type="submit" class="secondary outline" hx-disabled-elt="this">← Change game</button>
+</form>
+{{ end }}
+
+
+{{ define "step_ready" }}
+<h2 data-step="ready">Ready: {{ .Session.ChosenGame }} on {{ .Session.ChosenDiff }}</h2>
+<form hx-post="/wizard/start" hx-target="#wizard-frame" hx-swap="innerHTML">
+  <button type="submit" hx-disabled-elt="this">Start game →</button>
+</form>
+<form hx-post="/wizard/back" hx-target="#wizard-frame" hx-swap="innerHTML" class="arcade-controls">
+  <button type="submit" class="secondary outline" hx-disabled-elt="this">← Change difficulty</button>
+</form>
+{{ end }}
+
+
+{{ define "step_playing" }}
+<header data-step="playing">
+  <h2>{{ .Session.ChosenGame }} — {{ .Session.ChosenDiff }}</h2>
+  <p>Player: <strong>{{ .Session.Name }}</strong></p>
+</header>
+{{ if eq .Session.ChosenGame "2048" }}{{ template "twenty48_board" .Board }}{{ end }}
+<details>
+  <summary>How to play</summary>
+  <p>Use the arrow keys (or buttons) to slide tiles. Combine matching numbers to reach 2048.</p>
+</details>
+<form hx-post="/wizard/quit" hx-target="#wizard-frame" hx-swap="innerHTML" class="arcade-controls">
+  <button type="submit" class="secondary outline" hx-disabled-elt="this">Quit (no score)</button>
+</form>
+{{ end }}
+
+
+{{ define "step_finished" }}
+<header data-step="finished">
+  <h2>Game over!</h2>
+  <p><strong>{{ .Session.Name }}</strong> — Final score: <strong>{{ .FinalScore }}</strong> on {{ .Session.ChosenGame }} ({{ .Session.ChosenDiff }})</p>
+</header>
+{{ template "leaderboard" . }}
+<div class="arcade-controls">
+  <form hx-post="/wizard/replay" hx-target="#wizard-frame" hx-swap="innerHTML">
+    <button type="submit" hx-disabled-elt="this">↻ Replay same</button>
+  </form>
+  <form hx-post="/wizard/change-difficulty" hx-target="#wizard-frame" hx-swap="innerHTML">
+    <button type="submit" class="secondary" hx-disabled-elt="this">Different difficulty</button>
+  </form>
+  <form hx-post="/wizard/different-game" hx-target="#wizard-frame" hx-swap="innerHTML">
+    <button type="submit" class="secondary outline" hx-disabled-elt="this">Different game</button>
+  </form>
+</div>
+{{ end }}
+
+
+{{ define "leaderboard" }}
+<table>
+  <caption>Top scores — {{ .Session.ChosenGame }} ({{ .Session.ChosenDiff }})</caption>
+  <thead><tr><th>#</th><th>Player</th><th>Score</th></tr></thead>
+  <tbody>
+    {{ range $i, $e := .Leaderboard }}
+    <tr{{ if $e.IsCurrent }} class="current-player"{{ end }}>
+      <td>{{ inc $i }}</td>
+      <td>{{ $e.Entry.Name }}</td>
+      <td>{{ $e.Entry.Score }}</td>
+    </tr>
+    {{ else }}
+    <tr><td colspan="3"><em>No scores yet — be the first!</em></td></tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ end }}

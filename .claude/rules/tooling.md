@@ -124,7 +124,7 @@ coverage.html
 *.db-shm
 
 # Build outputs
-/no-js-todolist
+/no-js-arcade
 ```
 
 ## CI (when it lands)

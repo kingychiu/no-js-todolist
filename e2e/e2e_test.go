@@ -1,9 +1,8 @@
-// Package e2e holds black-box user-story tests for the no-js-todolist HTTP API.
+// Package e2e holds black-box user-story tests for no-js-arcade.
 //
-// These tests only use the exported todolist.NewApp surface plus stdlib net/http
-// and goquery. They MUST NOT poke at internal helpers (mustForceStatus, direct
-// DB writes, etc.) — every state change must flow through the HTTP layer the
-// way a real client would drive it.
+// These tests can only drive the system through HTTP. They cannot import the
+// arcade package's unexported helpers, so every state change must go through
+// the public API the way a real client does.
 package e2e
 
 import (
@@ -11,22 +10,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
 	_ "github.com/mattn/go-sqlite3"
 
-	todolist "github.com/kingychiu/no-js-todolist"
+	arcade "github.com/kingychiu/no-js-todolist"
 )
 
-// newServer boots a fresh app backed by a per-test SQLite file.
-func newServer(t *testing.T) *httptest.Server {
+func newServer(t *testing.T) (*httptest.Server, *http.Client) {
 	t.Helper()
 	dbpath := filepath.Join(t.TempDir(), "e2e.db")
 	sqldb, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL&_busy_timeout=5000&_sync=NORMAL&_fk=on", dbpath))
@@ -34,15 +31,16 @@ func newServer(t *testing.T) *httptest.Server {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { _ = sqldb.Close() })
-
-	e, err := todolist.NewApp(sqldb)
+	e, err := arcade.NewApp(sqldb)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
-
 	srv := httptest.NewServer(e)
 	t.Cleanup(srv.Close)
-	return srv
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	return srv, client
 }
 
 func parse(t *testing.T, body io.Reader) *goquery.Document {
@@ -54,264 +52,169 @@ func parse(t *testing.T, body io.Reader) *goquery.Document {
 	return doc
 }
 
-func postForm(t *testing.T, srv *httptest.Server, path string, values url.Values) *http.Response {
+func postForm(t *testing.T, client *http.Client, urlStr string, values url.Values) *http.Response {
 	t.Helper()
-	resp, err := srv.Client().PostForm(srv.URL+path, values)
+	if values == nil {
+		values = url.Values{}
+	}
+	resp, err := client.PostForm(urlStr, values)
 	if err != nil {
-		t.Fatalf("POST %s: %v", path, err)
+		t.Fatalf("POST %s: %v", urlStr, err)
 	}
 	return resp
 }
 
-func do(t *testing.T, srv *httptest.Server, method, path string) *http.Response {
+func get(t *testing.T, client *http.Client, urlStr string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(method, srv.URL+path, nil)
+	resp, err := client.Get(urlStr)
 	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
+		t.Fatalf("GET %s: %v", urlStr, err)
 	}
 	return resp
 }
 
-// extractTodoID finds the first <li id="todo-N"> in the document and returns N.
-func extractTodoID(t *testing.T, doc *goquery.Document) int64 {
+func parseAndClose(t *testing.T, resp *http.Response) *goquery.Document {
 	t.Helper()
-	id, ok := doc.Find("li[id^='todo-']").First().Attr("id")
-	if !ok {
-		t.Fatalf("no <li id='todo-*'> in document; body:\n%s", documentHTML(doc))
-	}
-	n, err := strconv.ParseInt(strings.TrimPrefix(id, "todo-"), 10, 64)
-	if err != nil {
-		t.Fatalf("parse id %q: %v", id, err)
-	}
-	return n
+	defer func() { _ = resp.Body.Close() }()
+	return parse(t, resp.Body)
 }
 
-func documentHTML(doc *goquery.Document) string {
-	h, err := doc.Html()
-	if err != nil {
-		return "(no html)"
-	}
-	return h
-}
-
-// actionButtonText returns the text of the first hx-put button in the document, or "" if none.
-func actionButtonText(doc *goquery.Document) string {
-	return strings.TrimSpace(doc.Find("li button[hx-put]").First().Text())
+func dataStep(doc *goquery.Document) string {
+	return doc.Find("[data-step]").AttrOr("data-step", "")
 }
 
 func hasOOBErrorBanner(doc *goquery.Document) bool {
-	return doc.Find(`div#error-banner[hx-swap-oob="true"]`).Length() > 0
+	return doc.Find(`#error-banner[hx-swap-oob="true"]`).Length() > 0
 }
 
 // --- User-story tests ---
 
-// TestE2E_FullLifecycle walks one todo through every state via the HTTP API:
-// add → start → complete, then verifies the list shows it as completed.
-func TestE2E_FullLifecycle(t *testing.T) {
+// TestE2E_FullArcadeFlow walks the user from a fresh visit all the way to
+// the finished step via Quit, and verifies the leaderboard view appears.
+func TestE2E_FullArcadeFlow(t *testing.T) {
 	t.Parallel()
-	srv := newServer(t)
+	srv, client := newServer(t)
 
-	// User adds a todo.
-	resp := postForm(t, srv, "/todos", url.Values{"title": {"learn htmx"}})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST status = %d", resp.StatusCode)
-	}
-	doc := parse(t, resp.Body)
-	_ = resp.Body.Close()
-	id := extractTodoID(t, doc)
-	if got := actionButtonText(doc); got != "Start Work" {
-		t.Fatalf("after POST, button = %q, want %q", got, "Start Work")
+	// Land on the homepage — should be the name step.
+	doc := parseAndClose(t, get(t, client, srv.URL+"/"))
+	if dataStep(doc) != "name" {
+		t.Fatalf("step = %q, want name", dataStep(doc))
 	}
 
-	// User clicks "Start Work".
-	resp = do(t, srv, http.MethodPut, fmt.Sprintf("/todos/%d/progress", id))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT 1 status = %d", resp.StatusCode)
+	// Submit name.
+	doc = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/name", url.Values{"name": {"Alice"}}))
+	if dataStep(doc) != "game" {
+		t.Fatalf("after name, step = %q, want game", dataStep(doc))
 	}
-	doc = parse(t, resp.Body)
-	_ = resp.Body.Close()
-	if got := actionButtonText(doc); got != "Complete" {
-		t.Fatalf("after first PUT, button = %q, want %q", got, "Complete")
+	if !strings.Contains(doc.Text(), "Alice") {
+		t.Errorf("expected name 'Alice' in game-step view")
 	}
 
-	// User clicks "Complete".
-	resp = do(t, srv, http.MethodPut, fmt.Sprintf("/todos/%d/progress", id))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT 2 status = %d", resp.StatusCode)
-	}
-	doc = parse(t, resp.Body)
-	_ = resp.Body.Close()
-	if doc.Find("li button[hx-put]").Length() != 0 {
-		t.Fatalf("after second PUT, expected no action button")
-	}
-	if cls := doc.Find("li").AttrOr("class", ""); !strings.Contains(cls, "completed") {
-		t.Fatalf("after second PUT, li class = %q, expected 'completed'", cls)
+	// Pick 2048.
+	doc = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/game", url.Values{"game": {"2048"}}))
+	if dataStep(doc) != "difficulty" {
+		t.Fatalf("after game, step = %q, want difficulty", dataStep(doc))
 	}
 
-	// User reloads — the list shows the completed todo.
-	resp = do(t, srv, http.MethodGet, "/")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET / status = %d", resp.StatusCode)
+	// Pick easy.
+	doc = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/difficulty", url.Values{"difficulty": {"easy"}}))
+	if dataStep(doc) != "ready" {
+		t.Fatalf("after difficulty, step = %q, want ready", dataStep(doc))
 	}
-	doc = parse(t, resp.Body)
-	_ = resp.Body.Close()
-	li := doc.Find(fmt.Sprintf("li#todo-%d", id))
-	if li.Length() != 1 {
-		t.Fatalf("after reload, expected todo in list")
+
+	// Start.
+	doc = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/start", nil))
+	if dataStep(doc) != "playing" {
+		t.Fatalf("after start, step = %q, want playing", dataStep(doc))
 	}
-	if !strings.Contains(li.AttrOr("class", ""), "completed") {
-		t.Fatalf("reloaded todo not marked completed")
+	if doc.Find("#twenty48-board").Length() == 0 {
+		t.Errorf("expected 2048 board after start")
+	}
+
+	// Make a move.
+	doc = parseAndClose(t, postForm(t, client, srv.URL+"/game/2048/move", url.Values{"dir": {"left"}}))
+	if doc.Find("#twenty48-board").Length() == 0 {
+		t.Errorf("expected board fragment in move response")
+	}
+
+	// Quit.
+	doc = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/quit", nil))
+	if dataStep(doc) != "finished" {
+		t.Fatalf("after quit, step = %q, want finished", dataStep(doc))
+	}
+	if doc.Find("table").Length() == 0 {
+		t.Errorf("expected leaderboard table on finished step")
 	}
 }
 
-// TestE2E_ProgressThenReject walks past completed and verifies the OOB error
-// banner appears while the row stays unchanged.
-func TestE2E_ProgressThenReject(t *testing.T) {
+// TestE2E_WizardSkipAhead_Rejected confirms that posting a later-step form
+// while the session is still on step 1 returns the OOB error banner.
+func TestE2E_WizardSkipAhead_Rejected(t *testing.T) {
 	t.Parallel()
-	srv := newServer(t)
-
-	resp := postForm(t, srv, "/todos", url.Values{"title": {"ship it"}})
-	doc := parse(t, resp.Body)
-	_ = resp.Body.Close()
-	id := extractTodoID(t, doc)
-
-	// Two valid progressions.
-	_ = do(t, srv, http.MethodPut, fmt.Sprintf("/todos/%d/progress", id)).Body.Close()
-	_ = do(t, srv, http.MethodPut, fmt.Sprintf("/todos/%d/progress", id)).Body.Close()
-
-	// Third attempt should be rejected.
-	resp = do(t, srv, http.MethodPut, fmt.Sprintf("/todos/%d/progress", id))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("rejection PUT status = %d", resp.StatusCode)
-	}
-	doc = parse(t, resp.Body)
-	_ = resp.Body.Close()
-
+	srv, client := newServer(t)
+	doc := parseAndClose(t, postForm(t, client, srv.URL+"/wizard/game", url.Values{"game": {"2048"}}))
 	if !hasOOBErrorBanner(doc) {
-		t.Fatalf("expected OOB error banner on rejected transition")
-	}
-	if doc.Find("li").Length() != 1 {
-		t.Fatalf("expected unchanged row to also be returned")
-	}
-	if cls := doc.Find("li").AttrOr("class", ""); !strings.Contains(cls, "completed") {
-		t.Fatalf("returned row should still be completed; class=%q", cls)
+		t.Errorf("expected OOB error banner on skip-ahead")
 	}
 }
 
-// TestE2E_AddDeleteCycle adds two todos, deletes the first, and verifies the
-// list reflects exactly the survivor.
-func TestE2E_AddDeleteCycle(t *testing.T) {
+// TestE2E_BackNav_DifficultyToGame walks to the difficulty step and uses
+// the back button to return to the game picker.
+func TestE2E_BackNav_DifficultyToGame(t *testing.T) {
 	t.Parallel()
-	srv := newServer(t)
+	srv, client := newServer(t)
 
-	resp := postForm(t, srv, "/todos", url.Values{"title": {"first"}})
-	doc := parse(t, resp.Body)
-	_ = resp.Body.Close()
-	firstID := extractTodoID(t, doc)
-
-	resp = postForm(t, srv, "/todos", url.Values{"title": {"second"}})
-	doc = parse(t, resp.Body)
-	_ = resp.Body.Close()
-	secondID := extractTodoID(t, doc)
-	if firstID == secondID {
-		t.Fatalf("expected distinct IDs, got %d and %d", firstID, secondID)
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/name", url.Values{"name": {"Bob"}}))
+	doc := parseAndClose(t, postForm(t, client, srv.URL+"/wizard/game", url.Values{"game": {"2048"}}))
+	if dataStep(doc) != "difficulty" {
+		t.Fatalf("setup: expected difficulty, got %q", dataStep(doc))
 	}
 
-	// Delete the first.
-	resp = do(t, srv, http.MethodDelete, fmt.Sprintf("/todos/%d", firstID))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("DELETE status = %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if len(body) != 0 {
-		t.Fatalf("DELETE body should be empty, got %q", body)
-	}
-
-	// Reload — only the second should remain.
-	resp = do(t, srv, http.MethodGet, "/")
-	doc = parse(t, resp.Body)
-	_ = resp.Body.Close()
-	if doc.Find(fmt.Sprintf("li#todo-%d", firstID)).Length() != 0 {
-		t.Fatalf("deleted todo should not appear in list")
-	}
-	if doc.Find(fmt.Sprintf("li#todo-%d", secondID)).Length() != 1 {
-		t.Fatalf("surviving todo should appear in list")
-	}
-	if !strings.Contains(doc.Find(fmt.Sprintf("li#todo-%d", secondID)).Text(), "second") {
-		t.Fatalf("surviving todo should retain its title")
+	doc = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/back", nil))
+	if dataStep(doc) != "game" {
+		t.Errorf("after back, step = %q, want game", dataStep(doc))
 	}
 }
 
-// TestE2E_ConcurrentProgress fires two PUTs at the same Pending todo in parallel.
-// Exactly one MUST win with a Complete-button row; the other MUST come back
-// with the row + OOB error banner (optimistic-lock rejection). The test
-// tolerates either ordering — the invariant is "exactly one success, exactly
-// one rejection."
-func TestE2E_ConcurrentProgress(t *testing.T) {
+// TestE2E_ReplayFromFinished plays a game, quits, then clicks Replay and
+// confirms the session lands back in the playing state with a fresh board.
+func TestE2E_ReplayFromFinished(t *testing.T) {
 	t.Parallel()
-	srv := newServer(t)
+	srv, client := newServer(t)
 
-	resp := postForm(t, srv, "/todos", url.Values{"title": {"race me"}})
-	doc := parse(t, resp.Body)
-	_ = resp.Body.Close()
-	id := extractTodoID(t, doc)
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/name", url.Values{"name": {"Carol"}}))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/game", url.Values{"game": {"2048"}}))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/difficulty", url.Values{"difficulty": {"medium"}}))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/start", nil))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/quit", nil))
 
-	type result struct {
-		body string
-		err  error
+	doc := parseAndClose(t, postForm(t, client, srv.URL+"/wizard/replay", nil))
+	if dataStep(doc) != "playing" {
+		t.Errorf("after replay, step = %q, want playing", dataStep(doc))
 	}
-	results := make([]result, 2)
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(2)
-	for i := range 2 {
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			r := do(t, srv, http.MethodPut, fmt.Sprintf("/todos/%d/progress", id))
-			b, err := io.ReadAll(r.Body)
-			_ = r.Body.Close()
-			results[i] = result{body: string(b), err: err}
-		}(i)
+	if doc.Find("#twenty48-board").Length() == 0 {
+		t.Errorf("expected fresh board after replay")
 	}
-	close(start)
-	wg.Wait()
+}
 
-	successes, rejections := 0, 0
-	for i, r := range results {
-		if r.err != nil {
-			t.Fatalf("goroutine %d read error: %v", i, r.err)
-		}
-		d, err := goquery.NewDocumentFromReader(strings.NewReader(r.body))
-		if err != nil {
-			t.Fatalf("goroutine %d parse: %v", i, err)
-		}
-		switch {
-		case hasOOBErrorBanner(d):
-			rejections++
-		case actionButtonText(d) == "Complete":
-			successes++
-		default:
-			// Could be the case where one goroutine read in_progress and progressed to completed.
-			// That's also a valid outcome of the race. Count it as a success-equivalent.
-			if d.Find("li button[hx-put]").Length() == 0 && strings.Contains(d.Find("li").AttrOr("class", ""), "completed") {
-				successes++
-			} else {
-				t.Errorf("goroutine %d response classification unclear: %s", i, r.body)
-			}
-		}
-	}
+// TestE2E_DifferentGame_FromFinished returns the user to the game picker
+// from the finished step.
+func TestE2E_DifferentGame_FromFinished(t *testing.T) {
+	t.Parallel()
+	srv, client := newServer(t)
 
-	// Total must be 2 and at least one must be a clear success path.
-	if successes+rejections != 2 {
-		t.Fatalf("expected 2 classified responses, got %d successes + %d rejections", successes, rejections)
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/name", url.Values{"name": {"Dora"}}))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/game", url.Values{"game": {"2048"}}))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/difficulty", url.Values{"difficulty": {"hard"}}))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/start", nil))
+	_ = parseAndClose(t, postForm(t, client, srv.URL+"/wizard/quit", nil))
+
+	doc := parseAndClose(t, postForm(t, client, srv.URL+"/wizard/different-game", nil))
+	if dataStep(doc) != "game" {
+		t.Errorf("after different-game, step = %q, want game", dataStep(doc))
 	}
-	if successes < 1 {
-		t.Fatalf("expected at least one success, got %d", successes)
+	// Name should be preserved.
+	if !strings.Contains(doc.Text(), "Dora") {
+		t.Errorf("expected name to persist across different-game")
 	}
 }

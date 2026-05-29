@@ -8,7 +8,7 @@ coverage.html
 *.db-shm
 
 # Build outputs
-/no-js-todolist
+/no-js-arcade
 
 # macOS
 .DS_Store

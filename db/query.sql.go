@@ -9,52 +9,112 @@ import (
 	"context"
 )
 
-const createTodo = `-- name: CreateTodo :one
-INSERT INTO todos (title) VALUES (?)
-RETURNING id, title, status
+const deleteGameState = `-- name: DeleteGameState :exec
+DELETE FROM game_states WHERE session_id = ?
 `
 
-func (q *Queries) CreateTodo(ctx context.Context, title string) (Todo, error) {
-	row := q.db.QueryRowContext(ctx, createTodo, title)
-	var i Todo
-	err := row.Scan(&i.ID, &i.Title, &i.Status)
-	return i, err
-}
-
-const deleteTodo = `-- name: DeleteTodo :exec
-DELETE FROM todos WHERE id = ?
-`
-
-func (q *Queries) DeleteTodo(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteTodo, id)
+func (q *Queries) DeleteGameState(ctx context.Context, sessionID string) error {
+	_, err := q.db.ExecContext(ctx, deleteGameState, sessionID)
 	return err
 }
 
-const getTodo = `-- name: GetTodo :one
-SELECT id, title, status FROM todos WHERE id = ?
+const getGameState = `-- name: GetGameState :one
+SELECT session_id, game, difficulty, fsm_state, board, score, started_at FROM game_states WHERE session_id = ?
 `
 
-func (q *Queries) GetTodo(ctx context.Context, id int64) (Todo, error) {
-	row := q.db.QueryRowContext(ctx, getTodo, id)
-	var i Todo
-	err := row.Scan(&i.ID, &i.Title, &i.Status)
+func (q *Queries) GetGameState(ctx context.Context, sessionID string) (GameState, error) {
+	row := q.db.QueryRowContext(ctx, getGameState, sessionID)
+	var i GameState
+	err := row.Scan(
+		&i.SessionID,
+		&i.Game,
+		&i.Difficulty,
+		&i.FsmState,
+		&i.Board,
+		&i.Score,
+		&i.StartedAt,
+	)
 	return i, err
 }
 
-const listTodos = `-- name: ListTodos :many
-SELECT id, title, status FROM todos ORDER BY id
+const getSession = `-- name: GetSession :one
+SELECT id, name, wizard_state, chosen_game, chosen_diff, created_at FROM sessions WHERE id = ?
 `
 
-func (q *Queries) ListTodos(ctx context.Context) ([]Todo, error) {
-	rows, err := q.db.QueryContext(ctx, listTodos)
+func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
+	row := q.db.QueryRowContext(ctx, getSession, id)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.WizardState,
+		&i.ChosenGame,
+		&i.ChosenDiff,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertLeaderboardEntry = `-- name: InsertLeaderboardEntry :one
+INSERT INTO leaderboard (name, game, difficulty, score) VALUES (?, ?, ?, ?)
+RETURNING id, name, game, difficulty, score, played_at
+`
+
+type InsertLeaderboardEntryParams struct {
+	Name       string
+	Game       string
+	Difficulty string
+	Score      int64
+}
+
+func (q *Queries) InsertLeaderboardEntry(ctx context.Context, arg InsertLeaderboardEntryParams) (Leaderboard, error) {
+	row := q.db.QueryRowContext(ctx, insertLeaderboardEntry,
+		arg.Name,
+		arg.Game,
+		arg.Difficulty,
+		arg.Score,
+	)
+	var i Leaderboard
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Game,
+		&i.Difficulty,
+		&i.Score,
+		&i.PlayedAt,
+	)
+	return i, err
+}
+
+const listLeaderboard = `-- name: ListLeaderboard :many
+SELECT id, name, game, difficulty, score, played_at FROM leaderboard
+WHERE game = ? AND difficulty = ?
+ORDER BY score DESC, played_at ASC
+LIMIT 20
+`
+
+type ListLeaderboardParams struct {
+	Game       string
+	Difficulty string
+}
+
+func (q *Queries) ListLeaderboard(ctx context.Context, arg ListLeaderboardParams) ([]Leaderboard, error) {
+	rows, err := q.db.QueryContext(ctx, listLeaderboard, arg.Game, arg.Difficulty)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Todo{}
+	items := []Leaderboard{}
 	for rows.Next() {
-		var i Todo
-		if err := rows.Scan(&i.ID, &i.Title, &i.Status); err != nil {
+		var i Leaderboard
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Game,
+			&i.Difficulty,
+			&i.Score,
+			&i.PlayedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -68,21 +128,122 @@ func (q *Queries) ListTodos(ctx context.Context) ([]Todo, error) {
 	return items, nil
 }
 
-const updateTodoStatus = `-- name: UpdateTodoStatus :execrows
-UPDATE todos SET status = ?1
-WHERE id = ?2 AND status = ?3
+const updateGameState = `-- name: UpdateGameState :execrows
+UPDATE game_states
+SET fsm_state = ?1,
+    board     = ?2,
+    score     = ?3
+WHERE session_id = ?4
+  AND fsm_state  = ?5
 `
 
-type UpdateTodoStatusParams struct {
-	NewStatus      string
-	ID             int64
-	ExpectedStatus string
+type UpdateGameStateParams struct {
+	NewState      string
+	Board         string
+	Score         int64
+	SessionID     string
+	ExpectedState string
 }
 
-func (q *Queries) UpdateTodoStatus(ctx context.Context, arg UpdateTodoStatusParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateTodoStatus, arg.NewStatus, arg.ID, arg.ExpectedStatus)
+func (q *Queries) UpdateGameState(ctx context.Context, arg UpdateGameStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateGameState,
+		arg.NewState,
+		arg.Board,
+		arg.Score,
+		arg.SessionID,
+		arg.ExpectedState,
+	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const updateSessionName = `-- name: UpdateSessionName :execrows
+UPDATE sessions SET name = ?1 WHERE id = ?2
+`
+
+type UpdateSessionNameParams struct {
+	Name string
+	ID   string
+}
+
+func (q *Queries) UpdateSessionName(ctx context.Context, arg UpdateSessionNameParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSessionName, arg.Name, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateSessionWizardState = `-- name: UpdateSessionWizardState :execrows
+UPDATE sessions
+SET wizard_state = ?1,
+    chosen_game  = ?2,
+    chosen_diff  = ?3
+WHERE id = ?4 AND wizard_state = ?5
+`
+
+type UpdateSessionWizardStateParams struct {
+	NewState      string
+	ChosenGame    string
+	ChosenDiff    string
+	ID            string
+	ExpectedState string
+}
+
+func (q *Queries) UpdateSessionWizardState(ctx context.Context, arg UpdateSessionWizardStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSessionWizardState,
+		arg.NewState,
+		arg.ChosenGame,
+		arg.ChosenDiff,
+		arg.ID,
+		arg.ExpectedState,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const upsertGameState = `-- name: UpsertGameState :exec
+INSERT INTO game_states (session_id, game, difficulty, fsm_state, board, score)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(session_id) DO UPDATE
+  SET game = excluded.game,
+      difficulty = excluded.difficulty,
+      fsm_state = excluded.fsm_state,
+      board = excluded.board,
+      score = excluded.score,
+      started_at = CURRENT_TIMESTAMP
+`
+
+type UpsertGameStateParams struct {
+	SessionID  string
+	Game       string
+	Difficulty string
+	FsmState   string
+	Board      string
+	Score      int64
+}
+
+func (q *Queries) UpsertGameState(ctx context.Context, arg UpsertGameStateParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGameState,
+		arg.SessionID,
+		arg.Game,
+		arg.Difficulty,
+		arg.FsmState,
+		arg.Board,
+		arg.Score,
+	)
+	return err
+}
+
+const upsertSession = `-- name: UpsertSession :exec
+INSERT INTO sessions (id) VALUES (?) ON CONFLICT(id) DO NOTHING
+`
+
+func (q *Queries) UpsertSession(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, upsertSession, id)
+	return err
 }

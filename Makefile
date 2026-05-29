@@ -28,10 +28,10 @@ run:
 	go run ./cmd/server
 
 build:
-	go build -o no-js-todolist ./cmd/server
+	go build -o no-js-arcade ./cmd/server
 
 sqlc:
 	sqlc generate
 
 clean:
-	rm -f no-js-todolist coverage.out coverage.html todos.db todos.db-wal todos.db-shm
+	rm -f no-js-arcade coverage.out coverage.html arcade.db arcade.db-wal arcade.db-shm

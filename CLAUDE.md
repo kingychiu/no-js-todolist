@@ -66,11 +66,16 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ---
 
-## Project: zero-JavaScript Todo List
+## Project: zero-JavaScript HTMX Arcade
 
-A deliberately constrained Todo List. The entire premise is that **the frontend ships zero custom JavaScript** — every state mutation is a server-rendered HTML response handled by HTMX. Because HTML *is* the API, the whole system can be tested end-to-end with `httptest` and HTML parsing: no browser, no JS runtime, no headless Chrome.
+A single-player arcade with a step-form lobby (Name → Game → Difficulty → Play → Leaderboard) and three classic games (Snake, 2048, Minesweeper). The entire premise is that **the frontend ships zero custom JavaScript** — every state mutation is a server-rendered HTML response handled by HTMX. Because HTML *is* the API, the whole system can be tested end-to-end with `httptest` and HTML parsing: no browser, no JS runtime, no headless Chrome.
 
-The native Go finite state machine (`Pending → InProgress → Completed`) lives at the handler boundary; invalid transitions are rejected by the database via an optimistic `WHERE … AND status = ?` clause and surfaced to the UI through an out-of-band error banner swap.
+**The backend is mostly FSMs + pure functions over strongly-typed data structures.** The "imperative shell" is just `handlers.go`, `app.go`, and Snake's goroutine. Everything else is testable as pure functions, microsecond-fast, no infrastructure.
+
+**Four composed Go FSMs** govern the state:
+- **Wizard FSM** orchestrates the lobby steps (`unnamed → named → game_chosen → difficulty_chosen → playing → finished`) with backward / replay transitions.
+- **Per-game FSMs** (Snake, 2048, Minesweeper) track the gameplay phase. Snake uses a per-session goroutine + HTMX long-polling; 2048 and Minesweeper are pure turn-based HTMX.
+- All FSMs are tiny `switch` methods on string types, enforced at the handler boundary and by optimistic `UPDATE … WHERE state = ?` SQL guards.
 
 ## Core Constraints — non-negotiable
 
@@ -99,12 +104,12 @@ The native Go finite state machine (`Pending → InProgress → Completed`) live
 ## Folder Structure
 
 ```
-no-js-todolist/
+no-js-arcade/
 ├── CLAUDE.md
 ├── .claude/
 │   └── rules/                 # path-scoped detailed rules — load on demand
 │       ├── handlers.md        # paths: handlers.go, app.go, cmd/server/**
-│       ├── fsm.md             # paths: fsm.go
+│       ├── fsm.md             # paths: wizard.go, game_*.go
 │       ├── views.md           # paths: views/**, render.go, static/**
 │       ├── database.md        # paths: query.sql, sqlc.yaml, migrations/**, db/**
 │       ├── tests.md           # paths: main_test.go, **/*_test.go
@@ -112,35 +117,48 @@ no-js-todolist/
 │       └── tooling.md         # paths: Makefile, .github/**, .gitignore
 ├── go.mod
 ├── go.sum
-├── app.go                     # package todolist — NewApp(), RunMigrations(), embeds
-├── fsm.go                     # TodoState + CanTransitionTo + Next
-├── handlers.go                # Echo HTTP handlers
+├── app.go                     # package arcade — NewApp(), RunMigrations(), embeds
+├── wizard.go                  # Wizard FSM — orchestrates the step-form lobby
+├── game_snake.go              # Snake FSM + per-session goroutine loop
+├── game_2048.go               # 2048 FSM + board logic
+├── game_minesweeper.go        # Minesweeper FSM + board logic
+├── handlers.go                # Echo HTTP handlers — bridge wizard + game FSMs
 ├── render.go                  # template parsing + Render helper
-├── main_test.go               # in-process httptest tests (white-box, package todolist)
+├── main_test.go               # in-process httptest tests (white-box, package arcade)
 ├── cmd/
 │   └── server/
-│       └── main.go            # package main — tiny entrypoint, calls todolist.NewApp
+│       └── main.go            # package main — tiny entrypoint, calls arcade.NewApp
 ├── e2e/
-│   └── e2e_test.go            # package e2e — black-box user-story tests via httptest.NewServer
+│   └── e2e_test.go            # package e2e — black-box user-story tests
 ├── sqlc.yaml
 ├── query.sql
 ├── db/                        # sqlc-generated — DO NOT EDIT BY HAND
 ├── migrations/
-│   └── 001_init.sql
+│   ├── 001_init.sql           # sessions table
+│   ├── 002_games.sql          # active game state (board JSON, fsm state)
+│   └── 003_leaderboard.sql    # per-(game, difficulty) scores
 ├── views/                     # html/template files
 │   ├── layout.html
-│   ├── index.html
-│   ├── todo_item.html
-│   └── error_banner.html
+│   ├── wizard_name.html       # step 1
+│   ├── wizard_game.html       # step 2
+│   ├── wizard_difficulty.html # step 3
+│   ├── wizard_finished.html   # step 5
+│   ├── snake_board.html       # step 4 — Snake
+│   ├── twenty48_board.html    # step 4 — 2048
+│   ├── minesweeper_board.html # step 4 — Minesweeper
+│   ├── leaderboard.html       # per-(game, difficulty) view
+│   └── error_banner.html      # OOB error fragment
 └── static/
     └── pico.css               # vendored Pico v2
 ```
 
 **Layout rationale:**
-- Root files are `package todolist` so both `cmd/server` and `e2e/` can import the wiring.
-- `cmd/server/main.go` is the only `package main` — a thin entrypoint calling `todolist.NewApp`.
-- `e2e/` is a separate package, which **physically forbids** importing unexported helpers from `todolist`. User-story tests can only drive the system through its HTTP API, the way a real client would.
-- Application code stays flat (no `internal/`, no `pkg/`); we only split when there's a real boundary (entrypoint, black-box tests).
+- Root files are `package arcade` so both `cmd/server` and `e2e/` can import the wiring.
+- **One file per FSM** (`wizard.go`, `game_snake.go`, `game_2048.go`, `game_minesweeper.go`). Each file holds its FSM constants, `CanTransitionTo`, and the game's runtime logic. Keeps each FSM near its consumers and acknowledges they're independently scoped.
+- `handlers.go` is the bridge: every state-mutating handler loads the wizard state, optionally loads the game state, validates the intended transition against both FSMs, applies the optimistic SQL UPDATE, and renders.
+- `cmd/server/main.go` is the only `package main` — a thin entrypoint calling `arcade.NewApp`.
+- `e2e/` is a separate package, which **physically forbids** importing unexported helpers. User-story tests can only drive the system through HTTP.
+- Application code stays flat at the package layer; we only split when there's a real boundary (entrypoint, black-box tests).
 
 ## How the rules are split
 
@@ -149,12 +167,15 @@ Detailed per-area rules live in `.claude/rules/*.md` with `paths:` frontmatter, 
 | File | Loads when Claude touches |
 |------|---------------------------|
 | `.claude/rules/handlers.md` | `handlers.go`, `app.go`, `cmd/server/**` |
-| `.claude/rules/fsm.md` | `fsm.go` |
+| `.claude/rules/fsm.md` | `wizard.go`, `game_*.go` |
+| `.claude/rules/pure_functions.md` | `wizard.go`, `game_*.go` |
 | `.claude/rules/views.md` | `views/**`, `render.go`, `static/**` |
 | `.claude/rules/database.md` | `query.sql`, `sqlc.yaml`, `migrations/**`, `db/**` |
 | `.claude/rules/tests.md` | `main_test.go`, `**/*_test.go` |
 | `.claude/rules/e2e.md` | `e2e/**` |
 | `.claude/rules/tooling.md` | `Makefile`, `.github/**`, `.golangci.yml`, `.gitignore` |
+
+`fsm.md` and `pure_functions.md` co-load on the same files because each handles a different concern: FSMs are about lifecycle phases and `CanTransitionTo`; pure functions are about strongly-typed data and side-effect-free logic. Together they describe the entire shape of `wizard.go` and `game_*.go`.
 
 ## Non-Goals (explicit "don't add this")
 

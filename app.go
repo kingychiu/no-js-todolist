@@ -1,9 +1,11 @@
-package todolist
+package arcade
 
 import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"math/rand"
+	"time"
 
 	"github.com/kingychiu/no-js-todolist/db"
 	"github.com/labstack/echo/v4"
@@ -16,7 +18,8 @@ var migrationsFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-// NewApp wires migrations, templates, handlers, and routes into a ready-to-Start Echo instance.
+// NewApp wires migrations, templates, handlers, and routes into a
+// ready-to-Start Echo instance.
 func NewApp(sqldb *sql.DB) (*echo.Echo, error) {
 	if err := RunMigrations(sqldb); err != nil {
 		return nil, fmt.Errorf("migrations: %w", err)
@@ -30,6 +33,7 @@ func NewApp(sqldb *sql.DB) (*echo.Echo, error) {
 	h := &Handlers{
 		Q:     db.New(sqldb),
 		Views: views,
+		rng:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	e := echo.New()
@@ -37,10 +41,18 @@ func NewApp(sqldb *sql.DB) (*echo.Echo, error) {
 	e.HidePort = true
 
 	e.StaticFS("/static", echo.MustSubFS(staticFS, "static"))
-	e.GET("/", h.ListTodos)
-	e.POST("/todos", h.CreateTodo)
-	e.PUT("/todos/:id/progress", h.ProgressTodo)
-	e.DELETE("/todos/:id", h.DeleteTodo)
+
+	e.GET("/", h.GetIndex)
+	e.POST("/wizard/name", h.PostWizardName)
+	e.POST("/wizard/game", h.PostWizardGame)
+	e.POST("/wizard/difficulty", h.PostWizardDifficulty)
+	e.POST("/wizard/start", h.PostWizardStart)
+	e.POST("/wizard/back", h.PostWizardBack)
+	e.POST("/wizard/quit", h.PostWizardQuit)
+	e.POST("/wizard/replay", h.PostWizardReplay)
+	e.POST("/wizard/change-difficulty", h.PostWizardChangeDifficulty)
+	e.POST("/wizard/different-game", h.PostWizardDifferentGame)
+	e.POST("/game/2048/move", h.PostT48Move)
 
 	return e, nil
 }

@@ -1,25 +1,47 @@
-{{ define "layout" }}<!DOCTYPE html>
+{{ define "page" }}<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>no-js-todolist</title>
+  <title>HTMX Arcade</title>
   <link rel="stylesheet" href="/static/pico.css">
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <style>
-    .completed > span:first-child { text-decoration: line-through; opacity: 0.6; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
-    #error-banner:not(:empty) { background: var(--pico-del-color, #fee); color: var(--pico-color-red-700, #900); padding: 0.5rem 1rem; border-radius: var(--pico-border-radius, 0.25rem); margin: 0.5rem 0; }
-    #todo-list { list-style: none; padding: 0; }
-    #todo-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid var(--pico-muted-border-color, #eee); }
-    #todo-list li > span:first-child { flex: 1; }
+    #error-banner:not(:empty) { background: var(--pico-del-color, #fee); color: var(--pico-color-red-700, #900); padding: 0.5rem 1rem; border-radius: 0.25rem; margin: 0.5rem 0; }
+    #wizard-frame { margin-top: 1rem; }
+    .row-group > * + * { margin-left: 0.5rem; }
+    .arcade-controls { margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    /* 2048 board */
+    #twenty48-board { display: inline-block; padding: 0.5rem; background: #bbada0; border-radius: 0.5rem; }
+    #twenty48-board table { border-collapse: separate; border-spacing: 0.4rem; margin: 0; }
+    #twenty48-board td { width: 4rem; height: 4rem; text-align: center; font-weight: bold; font-size: 1.6rem; background: #cdc1b4; border-radius: 0.25rem; color: #776e65; }
+    #twenty48-board td.empty { color: transparent; }
+    #twenty48-board td[data-v="2"]    { background: #eee4da; }
+    #twenty48-board td[data-v="4"]    { background: #ede0c8; }
+    #twenty48-board td[data-v="8"]    { background: #f2b179; color: #fff; }
+    #twenty48-board td[data-v="16"]   { background: #f59563; color: #fff; }
+    #twenty48-board td[data-v="32"]   { background: #f67c5f; color: #fff; }
+    #twenty48-board td[data-v="64"]   { background: #f65e3b; color: #fff; }
+    #twenty48-board td[data-v="128"]  { background: #edcf72; color: #fff; font-size: 1.3rem; }
+    #twenty48-board td[data-v="256"]  { background: #edcc61; color: #fff; font-size: 1.3rem; }
+    #twenty48-board td[data-v="512"]  { background: #edc850; color: #fff; font-size: 1.3rem; }
+    #twenty48-board td[data-v="1024"] { background: #edc53f; color: #fff; font-size: 1.1rem; }
+    #twenty48-board td[data-v="2048"] { background: #edc22e; color: #fff; font-size: 1.1rem; }
   </style>
 </head>
 <body>
   <main class="container">
-    <h1>Todos</h1>
+    <header>
+      <hgroup>
+        <h1>HTMX Arcade</h1>
+        <p>Zero JavaScript. Server-rendered HTML. <a href="https://github.com/kingychiu/no-js-todolist" target="_blank">source</a></p>
+      </hgroup>
+    </header>
     <div id="error-banner" aria-live="polite"></div>
-    {{ template "content" . }}
+    <section id="wizard-frame">
+      {{ template "wizard_frame" . }}
+    </section>
   </main>
 </body>
 </html>{{ end }}

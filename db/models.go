@@ -4,8 +4,34 @@
 
 package db
 
-type Todo struct {
-	ID     int64
-	Title  string
-	Status string
+import (
+	"time"
+)
+
+type GameState struct {
+	SessionID  string
+	Game       string
+	Difficulty string
+	FsmState   string
+	Board      string
+	Score      int64
+	StartedAt  time.Time
+}
+
+type Leaderboard struct {
+	ID         int64
+	Name       string
+	Game       string
+	Difficulty string
+	Score      int64
+	PlayedAt   time.Time
+}
+
+type Session struct {
+	ID          string
+	Name        string
+	WizardState string
+	ChosenGame  string
+	ChosenDiff  string
+	CreatedAt   time.Time
 }
