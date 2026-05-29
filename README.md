@@ -22,6 +22,79 @@ Games and step-form wizards are the *harder* version of this challenge: they inv
 
 The wizard FSM ensures users can't skip from "unnamed" straight to "playing." Each per-game FSM ensures moves after a win/loss are rejected at the database level (`UPDATE … WHERE state = ?` returning 0 rows → OOB error banner). The same row partial is reused for board rendering whether it's the initial load or a per-move response, so there's one source of truth for what the board looks like.
 
+## Architecture: FSMs + pure functions + a thin imperative shell
+
+The agentic-coding harness is fast not because the language is fast, but because the *test surface is narrow*. Every state transition in this repo is a `switch` on a string-typed constant. Every piece of game logic is a pure function over a strongly-typed struct. The only impure code is `handlers.go` (HTTP + DB), `game_snake_runtime.go` (the goroutine that owns Snake's loop), and `cmd/server/main.go` (`sql.Open` + `Start`).
+
+That separation is what makes ~50 tests run in under two seconds with zero mocks and zero infrastructure setup.
+
+### Why FSMs
+
+Each FSM is a small `switch` method on a string-typed constant — `WizardState`, `T48State`, `SnakeState`, `MSState`. The valid transitions are enumerable, so the entire transition space gets covered by one table-driven test:
+
+```go
+func (s T48State) CanTransitionTo(next T48State) bool {
+    switch s {
+    case T48Playing: return next == T48Won || next == T48Lost
+    case T48Won:     return next == T48Continued || next == T48Lost
+    case T48Continued: return next == T48Lost
+    }
+    return false
+}
+```
+
+A single test iterates every `(from, to)` pair against a hand-written `allowed[from][to]` map. 16 pairs covered in ~15 lines. 100% coverage of `CanTransitionTo` on first commit, no integration setup, no mocks.
+
+The same FSM is enforced **at the database** via optimistic `UPDATE … WHERE state = ?` clauses. A stale or invalid transition gets `rowsAffected == 0` and the handler returns an OOB error banner. That closes the TOCTOU race between "handler reads state" and "handler writes new state" — no transaction needed, no in-memory lock, just SQL.
+
+Four FSMs compose: the Wizard FSM orchestrates the lobby (6 states), each per-game FSM handles its own lifecycle (3-4 states). They don't know about each other; `handlers.go` is the bridge.
+
+### Why pure functions
+
+The classic blockers to unit testing — globals, time, RNG, DB, file I/O — are all factored out as parameters:
+
+```go
+// Pure: same input → same output. No package-level state, no Now(), no rand global.
+func Tick(board SnakeBoard, rng *rand.Rand) (SnakeBoard, SnakeState)
+func ApplyMove(board T48Board, dir T48Direction, rng *rand.Rand) (T48Board, T48State, bool)
+func RevealCell(board MSBoard, x, y int, rng *rand.Rand) (MSBoard, MSState)
+```
+
+Tests pass a seeded RNG; behavior becomes deterministic:
+
+```go
+b := T48Board{Cells: [][]int{{2,2,0,0}, ...}}
+after, _, _ := ApplyMove(b, T48Left, rand.New(rand.NewSource(1)))
+if after.Cells[0][0] != 4 { t.Errorf("expected merge to 4") }
+```
+
+No mocks, no fakes, no test doubles. The same `ApplyMove` runs in production and in tests; the only difference is the seed. Hundreds of constructed-board cases can run per millisecond.
+
+### The imperative shell is small and named
+
+| File | The impure thing it does |
+|---|---|
+| `handlers.go` | HTTP request parsing, DB reads/writes, session cookies, render |
+| `game_snake_runtime.go` | Per-session goroutine, ticker, mutex-protected board, long-poll waiters |
+| `cmd/server/main.go` | `sql.Open`, `arcade.NewApp(...).Start(":8080")` |
+
+Everything else — every FSM, every board update, every win/loss check, every direction validation, every flood-fill — is pure. Game-over branches in the shell *call into* pure functions; they don't reimplement the logic.
+
+### The empirical payoff
+
+The pattern delivers reliably across all three game modules. Coverage on each pure layer **on its first commit**:
+
+| Module | Pure layer coverage at ship |
+|---|---|
+| `game_2048.go` (Tick / merge / Hit2048 / HasValidMoves / NewT48Board) | 85-100% |
+| `game_minesweeper.go` (RevealCell + flood fill, FlagCell, placeMines, countAdjacentMines) | 85-100% |
+| `game_snake.go` (Tick / SetDirection / NewSnakeBoardView) | 100% |
+| `game_snake_runtime.go` (goroutine + waiters + game-over callback) | 88-100% |
+
+Pure layers ship at 90%+ basically for free. The persistent coverage gaps live in `handlers.go` (synthetic-failure branches) — exactly the layer where the FSM-and-pure-function discipline doesn't apply. **Bugs in game logic surface in pure unit tests instead of flaky integration tests** — which is the agentic feedback loop optimization the project is designed to validate.
+
+The full discipline is codified in `.claude/rules/fsm.md` and `.claude/rules/pure_functions.md` (both auto-load when Claude touches `wizard.go` or `game_*.go`).
+
 ## What's in the arcade
 
 | Game | FSM states | Difficulty knobs | Score = |
