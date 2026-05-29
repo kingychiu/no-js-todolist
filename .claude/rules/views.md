@@ -199,6 +199,26 @@ If an interactive element should not be visible, the server **must not render it
 
 Concrete: when the wizard is in step 2, the server returns only the step-2 fragment. Step 1's name input is gone from the response. When 2048 reaches Won state, the move-trigger buttons are no longer rendered.
 
+## Interactive triggers must NOT live inside self-replacing templates
+
+If a template is the target of a self-cycling `hx-trigger` — `load delay:0`, `every Ns`, or any pattern where the response replaces the trigger element on a tight loop — it must contain **only display data**. No `hx-post`, `hx-put`, `hx-delete`, `hx-patch`, or any other state-mutating attributes.
+
+**Why:** when the element is replaced via `outerHTML` swap, all interactive descendants are destroyed and recreated. HTMX rebinds the new elements, but there is a small window during the swap where:
+- A click event on a button-being-replaced can miss the new handler.
+- `from:body` keydown listeners on the old (destroyed) buttons leak — every swap adds new body listeners while the old ones are not always cleaned up.
+
+This is the class of bug that pure-Go tests cannot observe (it's a real-browser DOM behavior). The cheapest defense is structural: keep interactive triggers in a stable parent template that doesn't get swapped on the loop.
+
+**Pattern:**
+- Put the long-polling/auto-refreshing display fragment in its own template (e.g., `snake_board.html`).
+- Put the interactive controls (buttons, key listeners) in the parent step template (e.g., `step_playing` in `wizard.html`), where they render once and stay bound for the whole game.
+
+**Example (Snake):**
+- `snake_board.html` — only score + grid. Long-polled by `hx-trigger="load delay:0"`, swapped via `outerHTML` ~10× per second.
+- `step_playing` in `wizard.html` — holds the 4 persistent `<span class="visually-hidden">` keyboard listeners and the 4 visible directional buttons. Rendered once when the game starts.
+
+**Enforced by:** a structural test in `main_test.go` reads each long-polling template's source and asserts no `hx-post`/`hx-put`/`hx-delete`/`hx-patch` substrings.
+
 ## Debouncing: `hx-disabled-elt="this"` on every state-mutating button
 
 All buttons/triggers that fire `hx-post`, `hx-put`, or `hx-delete` **must** include `hx-disabled-elt="this"`. Native HTMX (core, not an extension). Prevents double-click races.

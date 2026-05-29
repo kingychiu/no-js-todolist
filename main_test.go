@@ -923,6 +923,36 @@ func TestPostT48Move_InvalidDir_OOBError(t *testing.T) {
 	}
 }
 
+// --- Structural test: long-polling templates must not contain interactive triggers ---
+
+// TestLongPollTemplatesHaveNoInteractiveTriggers asserts that any template
+// fragment that's the target of a self-cycling hx-trigger (load delay:0,
+// every Ns) does NOT contain state-mutating HTMX attributes. Interactive
+// triggers in a self-replacing element are unreliable — see
+// .claude/rules/views.md "Interactive triggers must NOT live inside
+// self-replacing templates".
+//
+// Add new long-polling templates to the list as they appear.
+func TestLongPollTemplatesHaveNoInteractiveTriggers(t *testing.T) {
+	t.Parallel()
+	longPollTemplates := []string{
+		"views/snake_board.html",
+	}
+	forbidden := []string{`hx-post`, `hx-put`, `hx-delete`, `hx-patch`}
+	for _, path := range longPollTemplates {
+		content, err := viewsFS.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(content)
+		for _, attr := range forbidden {
+			if strings.Contains(text, attr) {
+				t.Errorf("%s contains %q — interactive triggers must live in the stable parent template, not in the long-polling fragment that gets replaced every tick. See .claude/rules/views.md.", path, attr)
+			}
+		}
+	}
+}
+
 // --- 4. Cross-reference test ---
 
 func TestHxTargets_ResolveInShell(t *testing.T) {
