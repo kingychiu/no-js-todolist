@@ -78,9 +78,30 @@
   <h2>{{ .Session.ChosenGame }} — {{ .Session.ChosenDiff }}</h2>
   <p>Player: <strong>{{ .Session.Name }}</strong></p>
 </header>
+
+{{ if eq .Session.ChosenGame "snake" }}
+  {{/* Persistent direction listeners — kept OUTSIDE the long-polling board div so
+       they aren't destroyed and recreated every tick. HTMX processes them once
+       when the step renders, then they stay bound to the body for the whole game. */}}
+  <span class="visually-hidden" hx-post="/game/snake/direction?dir=N" hx-trigger="keydown[key=='ArrowUp']    from:body" hx-target="this" hx-swap="none"></span>
+  <span class="visually-hidden" hx-post="/game/snake/direction?dir=S" hx-trigger="keydown[key=='ArrowDown']  from:body" hx-target="this" hx-swap="none"></span>
+  <span class="visually-hidden" hx-post="/game/snake/direction?dir=E" hx-trigger="keydown[key=='ArrowRight'] from:body" hx-target="this" hx-swap="none"></span>
+  <span class="visually-hidden" hx-post="/game/snake/direction?dir=W" hx-trigger="keydown[key=='ArrowLeft']  from:body" hx-target="this" hx-swap="none"></span>
+{{ end }}
+
 {{ if eq .Session.ChosenGame "2048" }}{{ template "twenty48_board" .Board }}{{ end }}
 {{ if eq .Session.ChosenGame "minesweeper" }}{{ template "minesweeper_board" .Board }}{{ end }}
 {{ if eq .Session.ChosenGame "snake" }}{{ template "snake_board" .Board }}{{ end }}
+
+{{ if eq .Session.ChosenGame "snake" }}
+  <div role="group" style="margin-top:0.5rem; max-width:14rem;">
+    <button hx-post="/game/snake/direction?dir=W" hx-target="this" hx-swap="none" aria-label="Move left">←</button>
+    <button hx-post="/game/snake/direction?dir=N" hx-target="this" hx-swap="none" aria-label="Move up">↑</button>
+    <button hx-post="/game/snake/direction?dir=S" hx-target="this" hx-swap="none" aria-label="Move down">↓</button>
+    <button hx-post="/game/snake/direction?dir=E" hx-target="this" hx-swap="none" aria-label="Move right">→</button>
+  </div>
+{{ end }}
+
 <details>
   <summary>How to play</summary>
   {{ if eq .Session.ChosenGame "2048" }}<p>Use the arrow keys (or buttons) to slide tiles. Combine matching numbers to reach 2048.</p>{{ end }}

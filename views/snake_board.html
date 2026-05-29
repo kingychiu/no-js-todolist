@@ -1,18 +1,8 @@
 {{ define "snake_board" }}
 <div id="snake-board" hx-get="/game/snake/board" hx-trigger="load delay:0" hx-target="this" hx-swap="outerHTML">
   <p style="margin:0 0 0.5rem 0;">Score: <strong>{{ .Score }}</strong></p>
-  <button hidden hx-post="/game/snake/direction" hx-vals='{"dir":"N"}' hx-trigger="keydown[key=='ArrowUp']    from:body" hx-swap="none"></button>
-  <button hidden hx-post="/game/snake/direction" hx-vals='{"dir":"S"}' hx-trigger="keydown[key=='ArrowDown']  from:body" hx-swap="none"></button>
-  <button hidden hx-post="/game/snake/direction" hx-vals='{"dir":"E"}' hx-trigger="keydown[key=='ArrowRight'] from:body" hx-swap="none"></button>
-  <button hidden hx-post="/game/snake/direction" hx-vals='{"dir":"W"}' hx-trigger="keydown[key=='ArrowLeft']  from:body" hx-swap="none"></button>
   <div class="snake-grid" style="grid-template-columns: repeat({{ .Width }}, 18px);">
     {{ range .Cells }}{{ range . }}<div class="snake-cell snake-{{ . }}"></div>{{ end }}{{ end }}
-  </div>
-  <div role="group" style="margin-top:0.5rem; max-width:14rem;">
-    <button hx-post="/game/snake/direction" hx-vals='{"dir":"W"}' hx-swap="none" aria-label="Move left">←</button>
-    <button hx-post="/game/snake/direction" hx-vals='{"dir":"N"}' hx-swap="none" aria-label="Move up">↑</button>
-    <button hx-post="/game/snake/direction" hx-vals='{"dir":"S"}' hx-swap="none" aria-label="Move down">↓</button>
-    <button hx-post="/game/snake/direction" hx-vals='{"dir":"E"}' hx-swap="none" aria-label="Move right">→</button>
   </div>
 </div>
 {{ end }}
