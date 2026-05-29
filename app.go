@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/kingychiu/no-js-todolist/db"
+	"github.com/kingychiu/no-js-arcade/db"
 	"github.com/labstack/echo/v4"
 	"github.com/pressly/goose/v3"
 )

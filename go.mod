@@ -1,4 +1,4 @@
-module github.com/kingychiu/no-js-todolist
+module github.com/kingychiu/no-js-arcade
 
 go 1.25.10
 

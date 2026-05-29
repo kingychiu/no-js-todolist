@@ -6,7 +6,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	arcade "github.com/kingychiu/no-js-todolist"
+	arcade "github.com/kingychiu/no-js-arcade"
 )
 
 func main() {

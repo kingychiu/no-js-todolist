@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kingychiu/no-js-todolist/db"
+	"github.com/kingychiu/no-js-arcade/db"
 	"github.com/labstack/echo/v4"
 )
 

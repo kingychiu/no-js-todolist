@@ -20,7 +20,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	_ "github.com/mattn/go-sqlite3"
 
-	arcade "github.com/kingychiu/no-js-todolist"
+	arcade "github.com/kingychiu/no-js-arcade"
 )
 
 func newServer(t *testing.T) (*httptest.Server, *http.Client) {

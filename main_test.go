@@ -17,7 +17,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/kingychiu/no-js-todolist/db"
+	"github.com/kingychiu/no-js-arcade/db"
 	"github.com/labstack/echo/v4"
 )
 
